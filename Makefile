@@ -34,7 +34,25 @@ INCLUDES := -Iinclude            \
             -Ivendor/bearssl/inc \
             -Isrc
 
-.PHONY: all clean install test asan bearssl
+# ---------------------------------------------------------------------------
+# Unit tests — each test file is a separate binary
+# ---------------------------------------------------------------------------
+
+TEST_CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -g -O0 -DDEBUG
+TEST_LDFLAGS :=
+
+TEST_BINS := tests/test_arena tests/test_buf tests/test_json
+
+tests/test_arena: tests/test_arena.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_buf: tests/test_buf.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_json: tests/test_json.c src/util/json.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -Ivendor/jsmn -o $@ $^
+
+.PHONY: all clean install test asan bearssl unit-test
 
 all: bearssl $(BIN)
 
@@ -72,12 +90,18 @@ test_stream: bearssl $(TEST_STREAM_SRCS)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(BIN) test_stream
+	rm -f $(OBJS) $(BIN) test_stream $(TEST_BINS)
 
 install: $(BIN)
 	install -d $(DESTDIR)/bin
 	install -m 755 $(BIN) $(DESTDIR)/bin/
 
-test:
-	$(MAKE) DEBUG=1 all
+unit-test: $(TEST_BINS)
+	@failed=0; \
+	for t in $(TEST_BINS); do \
+	    $$t 2>&1 || failed=$$((failed + 1)); \
+	done; \
+	exit $$failed
+
+test: unit-test
 	./tests/run.sh

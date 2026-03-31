@@ -8,3 +8,9 @@ nanocode
 *~
 build/
 .env
+test_stream
+tests/test_arena
+tests/test_buf
+tests/test_json
+*.o
+nanocode

@@ -50,7 +50,8 @@ int buf_append_str(Buf *b, const char *s)
 
 const char *buf_str(Buf *b)
 {
-    if (buf_grow(b, b->len) != 0)
+    /* Ensure at least one byte allocated for the NUL terminator. */
+    if (buf_grow(b, b->len + 1) != 0)
         return "";
     b->data[b->len] = '\0';
     return b->data;

@@ -1,0 +1,10 @@
+*.o
+*.d
+nanocode
+*.dSYM/
+.DS_Store
+*.swp
+*.swo
+*~
+build/
+.env

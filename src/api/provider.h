@@ -4,7 +4,8 @@
  * Supports:
  *   PROVIDER_CLAUDE  — Anthropic Messages API (POST /v1/messages)
  *   PROVIDER_OPENAI  — OpenAI-compatible API  (POST /v1/chat/completions)
- *                      Works for Ollama, OpenAI, etc.
+ *   PROVIDER_OLLAMA  — Ollama native API (POST /api/chat), NDJSON stream,
+ *                      supports think:false to disable extended reasoning
  */
 
 #ifndef PROVIDER_H
@@ -15,7 +16,8 @@
 
 typedef enum {
     PROVIDER_CLAUDE = 0,
-    PROVIDER_OPENAI,      /* also covers Ollama */
+    PROVIDER_OPENAI,
+    PROVIDER_OLLAMA,      /* Ollama native /api/chat — supports think:false */
 } ProviderType;
 
 typedef struct {

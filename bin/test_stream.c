@@ -62,7 +62,7 @@ int main(int argc, char **argv)
     }
 
     ProviderConfig cfg = {
-        .type     = PROVIDER_OPENAI,
+        .type     = PROVIDER_OLLAMA,
         .base_url = "localhost",
         .port     = 11434,
         .use_tls  = 0,

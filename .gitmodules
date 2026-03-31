@@ -1,0 +1,6 @@
+[submodule "vendor/jsmn"]
+	path = vendor/jsmn
+	url = https://github.com/zserge/jsmn.git
+[submodule "vendor/bearssl"]
+	path = vendor/bearssl
+	url = https://bearssl.org/git/BearSSL

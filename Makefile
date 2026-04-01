@@ -42,7 +42,8 @@ TEST_CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -g -O0 -DDEBUG
 TEST_LDFLAGS :=
 
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
-             tests/test_fileops tests/test_bash tests/test_context
+             tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
+             tests/test_renderer tests/test_diff_sandbox
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -65,6 +66,18 @@ tests/test_bash: tests/test_bash.c src/tools/bash.c src/tools/executor.c \
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_context: tests/test_context.c src/agent/context.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_grep: tests/test_grep.c src/tools/grep.c \
+                 src/util/arena.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_renderer: tests/test_renderer.c src/tui/renderer.c \
+                     src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_diff_sandbox: tests/test_diff_sandbox.c src/tools/diff_sandbox.c \
+                          src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test
@@ -105,7 +118,8 @@ test_stream: bearssl $(TEST_STREAM_SRCS)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(BIN) test_stream $(TEST_BINS)
+	rm -f $(OBJS) $(BIN) test_stream $(TEST_BINS) \
+	      tests/test_grep tests/test_grep_asan
 
 install: $(BIN)
 	install -d $(DESTDIR)/bin

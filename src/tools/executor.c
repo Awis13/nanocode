@@ -5,8 +5,12 @@
 #include "executor.h"
 
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+/* Forward declaration — json_escape is defined in the serialization section. */
+static size_t json_escape(char *dst, size_t cap, const char *src, size_t srclen);
 
 /* -------------------------------------------------------------------------
  * Registry
@@ -25,7 +29,11 @@ void tool_register(const char *name, const char *schema_json, ToolHandler fn)
 {
     assert(name != NULL);
     assert(fn   != NULL);
-    assert(s_count < TOOL_REGISTRY_MAX);
+    if (s_count >= TOOL_REGISTRY_MAX) {
+        fprintf(stderr, "tool_register: registry full (max %d)\n",
+                TOOL_REGISTRY_MAX);
+        abort();
+    }
 
     s_registry[s_count].name        = name;
     s_registry[s_count].schema_json = schema_json;
@@ -53,20 +61,30 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
     }
 
     /* Unknown tool — return error result with descriptive message. */
-    /* Format: {"error":"unknown tool","name":"<name>"} */
-    size_t nlen = strlen(name);
-    /* max overhead: ~40 chars of fixed JSON + name */
-    size_t buflen = nlen + 48;
-    char  *msg    = arena_alloc(arena, buflen);
+    /* Format: {"error":"unknown tool","name":"<name-escaped>"} */
+    size_t nlen    = strlen(name);
+    size_t esc_len = json_escape(NULL, 0, name, nlen);
+    /* overhead: {"error":"unknown tool","name":""} = 42 chars + 1 NUL */
+    size_t buflen  = esc_len + 44;
+    char  *msg     = arena_alloc(arena, buflen);
 
-    int written = snprintf(msg, buflen,
-                           "{\"error\":\"unknown tool\",\"name\":\"%s\"}",
-                           name);
+    /* Write prefix, escaped name, suffix. */
+    const char *prefix = "{\"error\":\"unknown tool\",\"name\":\"";
+    size_t plen = strlen(prefix);
+    memcpy(msg, prefix, plen);
+    size_t pos = plen;
+    pos += json_escape(msg + pos, buflen - pos, name, nlen);
+    if (pos + 3 <= buflen) {
+        msg[pos]     = '"';
+        msg[pos + 1] = '}';
+        msg[pos + 2] = '\0';
+        pos += 2;
+    }
 
     ToolResult r;
     r.error   = 1;
     r.content = msg;
-    r.len     = (written > 0) ? (size_t)written : 0;
+    r.len     = pos;
     return r;
 }
 
@@ -140,53 +158,49 @@ char *tool_result_to_json(Arena *arena, const char *tool_use_id,
     size_t      clen      = result->content ? result->len     : 0;
     size_t      id_len    = strlen(tool_use_id);
 
-    /* Dry-run escape to get exact escaped length. */
-    size_t esc_len = json_escape(NULL, 0, content, clen);
+    /* Dry-run escapes to get exact output sizes. */
+    size_t id_esclen  = json_escape(NULL, 0, tool_use_id, id_len);
+    size_t esc_len    = json_escape(NULL, 0, content, clen);
 
     /*
-     * Template (no is_error):
-     *   {"type":"tool_result","tool_use_id":"<id>","content":"<esc>"}
-     * Template (with is_error):
-     *   {"type":"tool_result","tool_use_id":"<id>","is_error":true,"content":"<esc>"}
+     * Wire format (Claude-specific tool_result block):
+     *   no error:  {"type":"tool_result","tool_use_id":"<id>","content":"<esc>"}
+     *   error:     {"type":"tool_result","tool_use_id":"<id>","is_error":true,"content":"<esc>"}
      */
-    const size_t overhead_ok  = 52 + 2; /* fixed chars + quotes around id/content */
-    const size_t overhead_err = 67 + 2;
-    size_t overhead = result->error ? overhead_err : overhead_ok;
-    size_t total = overhead + id_len + esc_len + 1; /* +1 for NUL */
+    static const char pfx[]     = "{\"type\":\"tool_result\",\"tool_use_id\":\"";
+    static const char mid_ok[]  = "\",\"content\":\"";
+    static const char mid_err[] = "\",\"is_error\":true,\"content\":\"";
+    static const char sfx[]     = "\"}";
+
+    const char *mid  = result->error ? mid_err : mid_ok;
+    size_t      mlen = result->error ? (sizeof mid_err - 1) : (sizeof mid_ok - 1);
+    size_t      total = (sizeof pfx - 1) + id_esclen + mlen + esc_len
+                      + (sizeof sfx - 1) + 1; /* +1 NUL */
 
     char *buf = arena_alloc(arena, total);
     if (!buf)
         return NULL;
 
-    /* Write prefix up to content value. */
-    int hdr_len;
-    if (result->error) {
-        hdr_len = snprintf(buf, total,
-            "{\"type\":\"tool_result\",\"tool_use_id\":\"%s\","
-            "\"is_error\":true,\"content\":\"",
-            tool_use_id);
-    } else {
-        hdr_len = snprintf(buf, total,
-            "{\"type\":\"tool_result\",\"tool_use_id\":\"%s\","
-            "\"content\":\"",
-            tool_use_id);
-    }
+    size_t pos = 0;
 
-    if (hdr_len < 0)
-        return NULL;
+    /* Prefix. */
+    memcpy(buf + pos, pfx, sizeof pfx - 1);
+    pos += sizeof pfx - 1;
 
-    size_t pos = (size_t)hdr_len;
+    /* Escaped tool_use_id. */
+    pos += json_escape(buf + pos, total - pos, tool_use_id, id_len);
 
-    /* Write escaped content. */
-    size_t written = json_escape(buf + pos, total - pos, content, clen);
-    pos += written;
+    /* Middle segment (closes id, opens content). */
+    memcpy(buf + pos, mid, mlen);
+    pos += mlen;
 
-    /* Close the JSON object. */
-    if (pos + 2 < total) {
-        buf[pos]     = '"';
-        buf[pos + 1] = '}';
-        buf[pos + 2] = '\0';
-    }
+    /* Escaped content. */
+    pos += json_escape(buf + pos, total - pos, content, clen);
+
+    /* Suffix. */
+    memcpy(buf + pos, sfx, sizeof sfx - 1);
+    pos += sizeof sfx - 1;
+    buf[pos] = '\0';
 
     return buf;
 }

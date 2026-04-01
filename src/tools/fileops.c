@@ -20,7 +20,8 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include <fnmatch.h>
+#include <unistd.h>   /* getcwd */
+#include <limits.h>   /* PATH_MAX */
 
 /* Maximum bytes returned by read_file without an explicit range. */
 #define READ_MAX_BYTES  (50 * 1024)
@@ -30,6 +31,88 @@
 
 /* Maximum tokens when parsing tool argument objects. */
 #define ARG_TOK_MAX     256
+
+/* -------------------------------------------------------------------------
+ * Path safety: canonicalize path and restrict to working directory.
+ *
+ * Resolves . and .. components purely by string manipulation (no filesystem
+ * access), so it works for paths that do not yet exist (e.g. new write targets).
+ * Returns an arena-allocated absolute canonical path if it is within the CWD,
+ * or NULL if the path escapes the working directory or is malformed.
+ * ---------------------------------------------------------------------- */
+
+static char *path_restrict(Arena *arena, const char *path)
+{
+    char cwd[PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd)))
+        return NULL;
+
+    /* Build absolute path. */
+    char abs[PATH_MAX * 2];
+    if (path[0] == '/') {
+        if ((size_t)snprintf(abs, sizeof(abs), "%s", path) >= sizeof(abs))
+            return NULL;
+    } else {
+        if ((size_t)snprintf(abs, sizeof(abs), "%s/%s", cwd, path) >= sizeof(abs))
+            return NULL;
+    }
+
+    /*
+     * Walk each component, resolving . and ..
+     * stack[i] = write position in buf just before component i was appended,
+     * so popping (..) restores pos to that value.
+     */
+    char   buf[PATH_MAX];
+    size_t stack[512];   /* supports up to 512 path components */
+    int    depth = 0;
+
+    buf[0] = '/';
+    size_t pos = 1;
+
+    char *p = abs;
+    while (*p) {
+        if (*p == '/') { p++; continue; }
+
+        char *slash = strchr(p, '/');
+        size_t clen = slash ? (size_t)(slash - p) : strlen(p);
+
+        if (clen == 0) {
+            /* empty component (double slash) */
+        } else if (clen == 1 && p[0] == '.') {
+            /* "." — skip */
+        } else if (clen == 2 && p[0] == '.' && p[1] == '.') {
+            /* ".." — pop */
+            if (depth > 0)
+                pos = stack[--depth];
+        } else {
+            /* Normal component — push. */
+            if (depth >= (int)(sizeof(stack) / sizeof(stack[0])))
+                return NULL;  /* path too deep */
+            if (pos + clen + 2 > sizeof(buf))
+                return NULL;  /* overflow */
+            stack[depth++] = pos;
+            memcpy(buf + pos, p, clen);
+            pos += clen;
+            buf[pos++] = '/';
+        }
+
+        p = slash ? slash : (p + clen);
+    }
+
+    /* Strip trailing slash (but keep root as "/"). */
+    if (pos > 1) pos--;
+    buf[pos] = '\0';
+
+    /* Require that canonical path is within (or equal to) CWD. */
+    size_t cwd_len = strlen(cwd);
+    if (strncmp(buf, cwd, cwd_len) != 0 ||
+        (buf[cwd_len] != '/' && buf[cwd_len] != '\0'))
+        return NULL;
+
+    char *result = arena_alloc(arena, pos + 1);
+    memcpy(result, buf, pos + 1);
+    return result;
+}
 
 /* -------------------------------------------------------------------------
  * Result helpers
@@ -365,6 +448,9 @@ ToolResult fileops_read(Arena *arena, const char *args_json)
     char *path = args_str(arena, toks, ntok, args_json, "path");
     if (!path)
         return err_result(arena, "read_file: missing required arg 'path'");
+    path = path_restrict(arena, path);
+    if (!path)
+        return err_result(arena, "read_file: path outside working directory");
 
     long offset = 0;
     long limit  = -1; /* -1 means no limit */
@@ -438,6 +524,10 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
     if (!path)    return err_result(arena, "write_file: missing required arg 'path'");
     if (!content) return err_result(arena, "write_file: missing required arg 'content'");
 
+    path = path_restrict(arena, path);
+    if (!path)
+        return err_result(arena, "write_file: path outside working directory");
+
     if (ensure_parent_dirs(path) < 0) {
         char msg[4096];
         snprintf(msg, sizeof(msg),
@@ -499,6 +589,10 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
     if (!path)       return err_result(arena, "edit_file: missing required arg 'path'");
     if (!old_string) return err_result(arena, "edit_file: missing required arg 'old_string'");
     if (!new_string) return err_result(arena, "edit_file: missing required arg 'new_string'");
+
+    path = path_restrict(arena, path);
+    if (!path)
+        return err_result(arena, "edit_file: path outside working directory");
 
     int replace_all = 0;
     args_bool(toks, ntok, args_json, "replace_all", &replace_all);
@@ -585,8 +679,15 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
                  path, strerror(errno));
         return err_result(arena, msg);
     }
-    fwrite(out_buf, 1, out_len, f);
+    size_t wr    = fwrite(out_buf, 1, out_len, f);
+    int    fwerr = ferror(f);
     fclose(f);
+
+    if (fwerr || wr != out_len) {
+        char msg[4096];
+        snprintf(msg, sizeof(msg), "edit_file: write error on '%s'", path);
+        return err_result(arena, msg);
+    }
 
     char *ok = arena_alloc(arena, 128);
     int   n  = snprintf(ok, 128,
@@ -622,6 +723,10 @@ ToolResult fileops_glob(Arena *arena, const char *args_json)
     char *base = args_str(arena, toks, ntok, args_json, "path");
     if (!base)
         base = (char *)".";
+
+    base = path_restrict(arena, base);
+    if (!base)
+        return err_result(arena, "glob: base directory outside working directory");
 
     /* Strip a single trailing slash (but keep plain "/"). */
     size_t blen = strlen(base);

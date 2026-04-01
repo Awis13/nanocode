@@ -44,7 +44,8 @@ char *tool_result_to_json(Arena *arena, const char *tool_use_id,
  * Helpers
  * ---------------------------------------------------------------------- */
 
-#define TMP_PREFIX "/tmp/test_fileops_"
+#define TMP_DIR    "tests/tmp"
+#define TMP_PREFIX TMP_DIR "/test_fileops_"
 
 /* Write `content` to a temp file, return its path (static buffer). */
 static const char *write_tmp(const char *suffix, const char *content)
@@ -280,7 +281,7 @@ TEST(test_read_missing_file)
     Arena *a = arena_new(1 << 20);
 
     ToolResult r = fileops_read(a,
-        "{\"path\":\"/tmp/no_such_file_fileops_xyz.txt\"}");
+        "{\"path\":\"tests/tmp/no_such_file_fileops_xyz.txt\"}");
     ASSERT_EQ(r.error, 1);
     ASSERT_NOT_NULL(strstr(r.content, "cannot open"));
 
@@ -351,6 +352,7 @@ TEST(test_register_all_no_crash)
 int main(void)
 {
     fprintf(stderr, "=== test_fileops ===\n");
+    mkdir(TMP_DIR, 0755); /* ensure temp dir exists; ignore EEXIST */
 
     RUN_TEST(test_edit_not_found);
     RUN_TEST(test_edit_ambiguous);

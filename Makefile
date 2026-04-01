@@ -43,7 +43,8 @@ TEST_LDFLAGS :=
 
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
-             tests/test_renderer tests/test_statusbar tests/test_diff_sandbox
+             tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
+             tests/test_oom tests/test_retry
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^

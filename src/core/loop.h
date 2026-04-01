@@ -15,6 +15,16 @@
 #define LOOP_READ   (1 << 0)
 #define LOOP_WRITE  (1 << 1)
 
+/*
+ * Loop mode controls the timeout used in loop_run().
+ *  LOOP_IDLE      — 100 ms timeout (default; conserves CPU when quiet)
+ *  LOOP_STREAMING — 16 ms timeout (~60 FPS; low-latency during SSE streams)
+ */
+typedef enum {
+    LOOP_IDLE      = 0,
+    LOOP_STREAMING = 1
+} LoopMode;
+
 typedef struct Loop Loop;
 
 /*
@@ -62,6 +72,13 @@ void  loop_run(Loop *l);
 
 /* Signal the loop to exit after the current iteration. */
 void  loop_stop(Loop *l);
+
+/*
+ * Set the loop's dispatch mode.  Takes effect on the next loop_run() iteration.
+ *  LOOP_IDLE      — 100 ms poll timeout (default)
+ *  LOOP_STREAMING — 16 ms poll timeout (~60 FPS, during active SSE streaming)
+ */
+void  loop_set_mode(Loop *l, LoopMode mode);
 
 /* Make `fd` non-blocking. Returns 0 on success, -1 on error. */
 int   fd_set_nonblocking(int fd);

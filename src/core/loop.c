@@ -72,6 +72,7 @@ static int g_timer_next_id = 0x1000000;
 struct Loop {
     int      kq;
     int      running;
+    LoopMode mode;    /* LOOP_IDLE (100 ms) or LOOP_STREAMING (16 ms) */
     /* Direct-indexed fd table: entries[fd] is valid iff bitmap bit is set. */
     FdEntry  fd_table[MAX_FDS];
     uint32_t fd_bitmap[MAX_FDS / 32];  /* 8 x uint32_t = 256 bits */
@@ -268,6 +269,7 @@ void loop_cancel_timer(Loop *l, int timer_id)
 struct Loop {
     int      epfd;
     int      running;
+    LoopMode mode;    /* LOOP_IDLE (100 ms) or LOOP_STREAMING (16 ms) */
     /* Direct-indexed fd table: fd_table[fd] is valid iff bitmap bit is set. */
     FdEntry  fd_table[MAX_FDS];
     uint32_t fd_bitmap[MAX_FDS / 32];  /* 8 x uint32_t = 256 bits */
@@ -441,7 +443,9 @@ void loop_run(Loop *l)
         while (waitpid(-1, NULL, WNOHANG) > 0)
             ;
 
-        if (loop_step(l, 100) < 0)
+        /* Adaptive timeout: tight during streaming (~60 FPS), relaxed at idle. */
+        int timeout_ms = (l->mode == LOOP_STREAMING) ? 16 : 100;
+        if (loop_step(l, timeout_ms) < 0)
             break;
     }
 }
@@ -449,6 +453,11 @@ void loop_run(Loop *l)
 void loop_stop(Loop *l)
 {
     l->running = 0;
+}
+
+void loop_set_mode(Loop *l, LoopMode mode)
+{
+    l->mode = mode;
 }
 
 /* -------------------------------------------------------------------------

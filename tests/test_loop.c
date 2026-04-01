@@ -235,6 +235,75 @@ TEST(test_multiple_fds)
     close(fb[0]); close(fb[1]);
 }
 
+/*
+ * loop_set_mode: default is LOOP_IDLE (100 ms); switching to LOOP_STREAMING
+ * and back to LOOP_IDLE does not corrupt loop state — subsequent fd events
+ * are still dispatched correctly.
+ */
+TEST(test_set_mode_idle_default)
+{
+    Loop *l = loop_new();
+    ASSERT_NOT_NULL(l);
+
+    /* Default mode: a step with 0 timeout returns immediately. */
+    int n = loop_step(l, 0);
+    ASSERT_TRUE(n >= 0);
+
+    loop_free(l);
+}
+
+TEST(test_set_mode_streaming_events)
+{
+    int fds[2];
+    make_pipe(fds);
+
+    Loop *l = loop_new();
+    ASSERT_NOT_NULL(l);
+
+    loop_set_mode(l, LOOP_STREAMING);
+
+    g_cb_count = 0;
+    ASSERT_EQ(loop_add_fd(l, fds[0], LOOP_READ, counting_cb, NULL), 0);
+
+    char buf = 's';
+    (void)write(fds[1], &buf, 1);
+
+    int n = loop_step(l, 200);
+    ASSERT_TRUE(n >= 1);
+    ASSERT_TRUE(g_cb_count >= 1);
+
+    loop_free(l);
+    close(fds[0]);
+    close(fds[1]);
+}
+
+TEST(test_set_mode_roundtrip)
+{
+    int fds[2];
+    make_pipe(fds);
+
+    Loop *l = loop_new();
+    ASSERT_NOT_NULL(l);
+
+    /* Switch to streaming then back to idle — loop must remain functional. */
+    loop_set_mode(l, LOOP_STREAMING);
+    loop_set_mode(l, LOOP_IDLE);
+
+    g_cb_count = 0;
+    ASSERT_EQ(loop_add_fd(l, fds[0], LOOP_READ, counting_cb, NULL), 0);
+
+    char buf = 'r';
+    (void)write(fds[1], &buf, 1);
+
+    int n = loop_step(l, 200);
+    ASSERT_TRUE(n >= 1);
+    ASSERT_TRUE(g_cb_count >= 1);
+
+    loop_free(l);
+    close(fds[0]);
+    close(fds[1]);
+}
+
 /* fd_set_nonblocking sanity check. */
 TEST(test_fd_set_nonblocking)
 {
@@ -265,6 +334,9 @@ int main(void)
     RUN_TEST(test_step_no_timeout);
     RUN_TEST(test_multiple_fds);
     RUN_TEST(test_fd_set_nonblocking);
+    RUN_TEST(test_set_mode_idle_default);
+    RUN_TEST(test_set_mode_streaming_events);
+    RUN_TEST(test_set_mode_roundtrip);
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;
 }

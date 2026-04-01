@@ -11,6 +11,7 @@
  */
 
 #include "prompt.h"
+#include "git.h"
 #include "../tools/executor.h"
 #include "../util/buf.h"
 
@@ -65,50 +66,6 @@ static char *read_file_heap(const char *path)
     fclose(f);
     buf[n] = '\0';
     return buf;
-}
-
-/*
- * Shell-escape a path for use in a single-quoted shell argument.
- * Writes the escaped path (with surrounding single quotes) into `dst`.
- * dst must be at least strlen(src)*4 + 3 bytes.
- * Returns number of bytes written (excluding NUL).
- */
-static size_t shell_quote(char *dst, const char *src)
-{
-    size_t out = 0;
-    dst[out++] = '\'';
-    for (const char *p = src; *p; p++) {
-        if (*p == '\'') {
-            /* End quote, escaped quote, re-open quote: '\'' */
-            dst[out++] = '\'';
-            dst[out++] = '\\';
-            dst[out++] = '\'';
-            dst[out++] = '\'';
-        } else {
-            dst[out++] = *p;
-        }
-    }
-    dst[out++] = '\'';
-    dst[out]   = '\0';
-    return out;
-}
-
-/*
- * Run `cmd` via popen and append all its stdout to `b`.
- * Silently ignores errors.
- */
-static void run_cmd_to_buf(Buf *b, const char *cmd)
-{
-    FILE *fp = popen(cmd, "r");
-    if (!fp)
-        return;
-
-    char chunk[256];
-    size_t n;
-    while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0)
-        buf_append(b, chunk, n);
-
-    pclose(fp);
 }
 
 /* -------------------------------------------------------------------------
@@ -207,68 +164,13 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec)
     }
 
     /* ------------------------------------------------------------------
-     * 4. Git status
-     *
-     * Subprocess spawning (popen/fork) hangs under AddressSanitizer on macOS
-     * due to ASan's fork() interception.  Guard with __SANITIZE_ADDRESS__ so
-     * ASan builds remain clean; the section is exercised in normal builds.
+     * 4. Git status and recent commits (delegated to git.c)
      * ------------------------------------------------------------------ */
-#ifndef __SANITIZE_ADDRESS__
-    /* Build a quoted cwd for shell use — worst case 4x expansion + quotes. */
-    char *quoted_cwd = malloc(cwdlen * 4 + 3);
-    if (quoted_cwd) {
-        shell_quote(quoted_cwd, cwd);
-
-        /* git status --short */
-        {
-            Buf git_status;
-            buf_init(&git_status);
-
-            /* Build command: git -C <cwd> status --short 2>/dev/null */
-            size_t cmdlen = strlen("git -C  status --short 2>/dev/null")
-                          + strlen(quoted_cwd) + 1;
-            char *cmd = malloc(cmdlen);
-            if (cmd) {
-                snprintf(cmd, cmdlen, "git -C %s status --short 2>/dev/null",
-                         quoted_cwd);
-                run_cmd_to_buf(&git_status, cmd);
-                free(cmd);
-            }
-
-            if (git_status.len > 0) {
-                buf_append_str(&b, "## Git Status\n```\n");
-                buf_append(&b, git_status.data, git_status.len);
-                buf_append_str(&b, "```\n\n");
-            }
-            buf_destroy(&git_status);
-        }
-
-        /* git log --oneline -5 */
-        {
-            Buf git_log;
-            buf_init(&git_log);
-
-            size_t cmdlen = strlen("git -C  log --oneline -5 2>/dev/null")
-                          + strlen(quoted_cwd) + 1;
-            char *cmd = malloc(cmdlen);
-            if (cmd) {
-                snprintf(cmd, cmdlen, "git -C %s log --oneline -5 2>/dev/null",
-                         quoted_cwd);
-                run_cmd_to_buf(&git_log, cmd);
-                free(cmd);
-            }
-
-            if (git_log.len > 0) {
-                buf_append_str(&b, "## Recent Commits\n```\n");
-                buf_append(&b, git_log.data, git_log.len);
-                buf_append_str(&b, "```\n\n");
-            }
-            buf_destroy(&git_log);
-        }
-
-        free(quoted_cwd);
+    {
+        char *git_ctx = git_context_summary(arena, cwd);
+        if (git_ctx && git_ctx[0])
+            buf_append_str(&b, git_ctx);
     }
-#endif /* __SANITIZE_ADDRESS__ */
 
     /* ------------------------------------------------------------------
      * 5. Available tools

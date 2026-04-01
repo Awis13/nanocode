@@ -45,7 +45,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
              tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
              tests/test_oom tests/test_retry tests/test_conversation \
-             tests/test_prompt tests/test_input
+             tests/test_prompt tests/test_input tests/test_repomap
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -107,6 +107,10 @@ tests/test_prompt: tests/test_prompt.c src/agent/prompt.c \
 tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
+# CMP-147: repo map — symbol extraction, context injection
+tests/test_repomap: tests/test_repomap.c src/agent/repomap.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
 .PHONY: all clean install test asan bearssl unit-test
 
 all: bearssl $(BIN)
@@ -131,6 +135,8 @@ TEST_STREAM_SRCS := bin/test_stream.c  \
                     src/util/buf.c     \
                     src/util/json.c    \
                     src/api/client.c   \
+                    src/api/retry.c    \
+                    src/api/tls_ca.c   \
                     src/api/sse.c      \
                     src/api/provider.c
 

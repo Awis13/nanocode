@@ -13,6 +13,7 @@
 
 #include <stddef.h>
 #include "../core/loop.h"
+#include "message.h"
 
 typedef enum {
     PROVIDER_CLAUDE = 0,
@@ -28,11 +29,6 @@ typedef struct {
     const char   *api_key;   /* may be NULL for local models */
     const char   *model;     /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
 } ProviderConfig;
-
-typedef struct {
-    const char *role;     /* "user" or "assistant" */
-    const char *content;
-} Message;
 
 /*
  * Called for each streamed text token.

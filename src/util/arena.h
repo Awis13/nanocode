@@ -11,9 +11,10 @@
 #include <stddef.h>
 
 typedef struct {
-    char  *base;   /* start of mapped region */
-    size_t size;   /* total mapped bytes */
-    size_t used;   /* bytes allocated so far */
+    char  *base;     /* start of mapped region */
+    size_t size;     /* logical capacity (user-requested size) */
+    size_t mapsize;  /* actual mmap size (page-rounded, used by arena_free) */
+    size_t used;     /* bytes allocated so far */
 } Arena;
 
 /* Allocate a new arena of at least `size` bytes. Returns NULL on failure. */

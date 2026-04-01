@@ -52,15 +52,14 @@ TEST(test_oom_large_single_alloc_returns_null) {
 }
 
 TEST(test_oom_request_larger_than_remaining) {
-    Arena *a = arena_new(64);
+    Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    /* Consume 48 bytes (3 × 16) */
-    ASSERT_NOT_NULL(arena_alloc(a, 16));
-    ASSERT_NOT_NULL(arena_alloc(a, 16));
-    ASSERT_NOT_NULL(arena_alloc(a, 16));
+    /* Fill arena leaving exactly 16 bytes free (one 16-byte aligned slot) */
+    while (a->used + 32 <= a->size)
+        ASSERT_NOT_NULL(arena_alloc(a, 16));
 
-    /* Only ~16 bytes remain; request 32 — should return NULL */
+    /* Request 32 bytes but only ≤16 bytes remain — must return NULL */
     void *p = arena_alloc(a, 32);
     ASSERT_NULL(p);
 

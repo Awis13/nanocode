@@ -18,6 +18,9 @@ static size_t align_up(size_t n, size_t align)
 
 Arena *arena_new(size_t size)
 {
+    if (size == 0)
+        return NULL;
+
     Arena *a = malloc(sizeof(Arena));
     if (!a)
         return NULL;
@@ -32,19 +35,22 @@ Arena *arena_new(size_t size)
         return NULL;
     }
 
-    a->base = mem;
-    a->size = map_size;
-    a->used = 0;
+    a->base    = mem;
+    a->size    = size;      /* logical capacity — enforced by arena_alloc */
+    a->mapsize = map_size;  /* actual mmap size — used only by arena_free */
+    a->used    = 0;
     return a;
 }
 
 void *arena_alloc(Arena *a, size_t size)
 {
+    if (size == 0)
+        return NULL;
     size_t aligned = align_up(size, ARENA_ALIGN);
     if (a->used + aligned > a->size) {
         fprintf(stderr, "arena: OOM — requested %zu, used %zu/%zu\n",
                 aligned, a->used, a->size);
-        abort();
+        return NULL;
     }
     void *ptr = a->base + a->used;
     a->used += aligned;
@@ -58,6 +64,6 @@ void arena_reset(Arena *a)
 
 void arena_free(Arena *a)
 {
-    munmap(a->base, a->size);
+    munmap(a->base, a->mapsize);
     free(a);
 }

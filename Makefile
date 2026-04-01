@@ -41,7 +41,8 @@ INCLUDES := -Iinclude            \
 TEST_CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -g -O0 -DDEBUG
 TEST_LDFLAGS :=
 
-TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
+TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
+             tests/test_fileops
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -53,6 +54,10 @@ tests/test_json: tests/test_json.c src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -Ivendor/jsmn -o $@ $^
 
 tests/test_executor: tests/test_executor.c src/tools/executor.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
+                    src/util/arena.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

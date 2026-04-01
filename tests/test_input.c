@@ -440,6 +440,198 @@ TEST(test_input_read_eof)
 }
 
 /* =========================================================================
+ * Event-driven InputCtx — input_on_readable tests
+ *
+ * These tests exercise the event-driven input API using a pipe in place of
+ * stdin.  Because stdin is not a tty in the test environment, raw mode is
+ * not enabled, but input_on_readable still processes raw bytes correctly.
+ * ====================================================================== */
+
+/* Shared callback state reset before each test. */
+static InputLine s_last_line;
+static int       s_line_count;
+
+static void capture_cb(InputLine il, void *ud)
+{
+    (void)ud;
+    s_last_line  = il;
+    s_line_count++;
+}
+
+/* Helper: replace STDIN_FILENO with the read end of a pipe, write `data`
+ * to the write end, then close it.  Returns the saved original stdin fd. */
+static int pipe_stdin(const char *data, size_t len, int pipefd[2])
+{
+    if (pipe(pipefd) < 0) return -1;
+    int saved = dup(STDIN_FILENO);
+    dup2(pipefd[0], STDIN_FILENO);
+    close(pipefd[0]);
+    if (len > 0) write(pipefd[1], data, len);
+    close(pipefd[1]);
+    return saved;
+}
+
+static void restore_stdin(int saved)
+{
+    dup2(saved, STDIN_FILENO);
+    close(saved);
+}
+
+/* --- basic single line -------------------------------------------------- */
+
+TEST(test_ctx_single_line)
+{
+    int pipefd[2];
+    int saved = pipe_stdin("hello\n", 6, pipefd);
+    if (saved < 0) return;
+
+    s_line_count = 0;
+    Arena *a = arena_new(1 << 16);
+    InputCtx *ctx = input_ctx_new(a, "> ", capture_cb, NULL);
+    ASSERT_NOT_NULL(ctx);
+
+    int r = input_on_readable(STDIN_FILENO, 0, ctx);
+
+    restore_stdin(saved);
+
+    /* r == 0: line emitted, context still registered.
+     * r == -1: EOF seen after the line (also valid for small pipe). */
+    ASSERT_TRUE(r == 0 || r == -1);
+    ASSERT_EQ(s_line_count, 1);
+    ASSERT_EQ(s_last_line.is_eof, 0);
+    ASSERT_NOT_NULL(s_last_line.text);
+    ASSERT_STR_EQ(s_last_line.text, "hello");
+    ASSERT_EQ((int)s_last_line.len, 5);
+
+    input_ctx_free(ctx);
+    arena_free(a);
+}
+
+/* --- EOF on empty buffer ------------------------------------------------- */
+
+TEST(test_ctx_eof_empty)
+{
+    int pipefd[2];
+    /* Close write end immediately → EOF on first read. */
+    int saved = pipe_stdin("", 0, pipefd);
+    if (saved < 0) return;
+
+    s_line_count = 0;
+    Arena *a = arena_new(1 << 16);
+    InputCtx *ctx = input_ctx_new(a, "> ", capture_cb, NULL);
+    ASSERT_NOT_NULL(ctx);
+
+    int r = input_on_readable(STDIN_FILENO, 0, ctx);
+
+    restore_stdin(saved);
+
+    ASSERT_EQ(r, -1);           /* EOF must remove fd from loop */
+    ASSERT_EQ(s_line_count, 1);
+    ASSERT_EQ(s_last_line.is_eof, 1);
+
+    input_ctx_free(ctx);
+    arena_free(a);
+}
+
+/* --- Ctrl+C cancels current buffer, next line emitted ------------------- */
+
+TEST(test_ctx_ctrl_c_cancel)
+{
+    /* Ctrl+C (0x03) at the start: resets buffer; then "ok\n" is accepted. */
+    const char input[] = "\x03ok\n";
+    int pipefd[2];
+    int saved = pipe_stdin(input, sizeof(input) - 1, pipefd);
+    if (saved < 0) return;
+
+    s_line_count = 0;
+    Arena *a = arena_new(1 << 16);
+    InputCtx *ctx = input_ctx_new(a, "> ", capture_cb, NULL);
+    ASSERT_NOT_NULL(ctx);
+
+    input_on_readable(STDIN_FILENO, 0, ctx);
+
+    restore_stdin(saved);
+
+    ASSERT_EQ(s_line_count, 1);
+    ASSERT_EQ(s_last_line.is_eof, 0);
+    ASSERT_NOT_NULL(s_last_line.text);
+    ASSERT_STR_EQ(s_last_line.text, "ok");
+
+    input_ctx_free(ctx);
+    arena_free(a);
+}
+
+/* --- multi-line continuation ("\") --------------------------------------- */
+
+TEST(test_ctx_multiline_continuation)
+{
+    /* "line1\\\n" + "line2\n" → callback gets "line1\nline2" */
+    const char input[] = "line1\\\nline2\n";
+    int pipefd[2];
+    int saved = pipe_stdin(input, sizeof(input) - 1, pipefd);
+    if (saved < 0) return;
+
+    s_line_count = 0;
+    Arena *a = arena_new(1 << 16);
+    InputCtx *ctx = input_ctx_new(a, "> ", capture_cb, NULL);
+    ASSERT_NOT_NULL(ctx);
+
+    input_on_readable(STDIN_FILENO, 0, ctx);
+
+    restore_stdin(saved);
+
+    /* Multi-line join produces a single callback. */
+    ASSERT_EQ(s_line_count, 1);
+    ASSERT_EQ(s_last_line.is_eof, 0);
+    ASSERT_NOT_NULL(s_last_line.text);
+    ASSERT_STR_EQ(s_last_line.text, "line1\nline2");
+
+    input_ctx_free(ctx);
+    arena_free(a);
+}
+
+/* --- input_ctx_reset updates prompt / arena ----------------------------- */
+
+TEST(test_ctx_reset_new_prompt)
+{
+    /* Send "first\n", consume it, reset with new prompt, send "second\n". */
+    const char input1[] = "first\n";
+    const char input2[] = "second\n";
+
+    int pipefd[2];
+    int saved;
+
+    s_line_count = 0;
+    Arena *a = arena_new(1 << 16);
+    InputCtx *ctx = input_ctx_new(a, "> ", capture_cb, NULL);
+    ASSERT_NOT_NULL(ctx);
+
+    /* First line */
+    saved = pipe_stdin(input1, sizeof(input1) - 1, pipefd);
+    if (saved < 0) { input_ctx_free(ctx); arena_free(a); return; }
+    input_on_readable(STDIN_FILENO, 0, ctx);
+    restore_stdin(saved);
+
+    ASSERT_EQ(s_line_count, 1);
+    ASSERT_STR_EQ(s_last_line.text, "first");
+
+    /* Reset for next line with a different prompt. */
+    input_ctx_reset(ctx, a, ">> ");
+
+    /* Second line */
+    saved = pipe_stdin(input2, sizeof(input2) - 1, pipefd);
+    if (saved < 0) { input_ctx_free(ctx); arena_free(a); return; }
+    input_on_readable(STDIN_FILENO, 0, ctx);
+    restore_stdin(saved);
+
+    ASSERT_EQ(s_line_count, 2);
+    ASSERT_STR_EQ(s_last_line.text, "second");
+
+    input_ctx_free(ctx);
+    arena_free(a);
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -477,6 +669,12 @@ int main(void)
 
     RUN_TEST(test_input_read_noninteractive);
     RUN_TEST(test_input_read_eof);
+
+    RUN_TEST(test_ctx_single_line);
+    RUN_TEST(test_ctx_eof_empty);
+    RUN_TEST(test_ctx_ctrl_c_cancel);
+    RUN_TEST(test_ctx_multiline_continuation);
+    RUN_TEST(test_ctx_reset_new_prompt);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

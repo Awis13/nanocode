@@ -90,4 +90,58 @@ void input_history_load(const char *path);
 /* Reset all history state (used by tests). */
 void input_history_reset(void);
 
+/* -------------------------------------------------------------------------
+ * Event-driven input — integrate stdin with the event loop
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Callback fired by input_on_readable when a complete logical line is ready.
+ * `line.is_eof` is 1 when the user presses Ctrl+D on an empty line or when
+ * stdin reaches EOF.  After an EOF callback the fd has been removed from raw
+ * mode and must not be re-registered with the loop.
+ */
+typedef void (*input_line_cb)(InputLine line, void *userdata);
+
+/* Opaque context for event-driven line editing. */
+typedef struct InputCtx InputCtx;
+
+/*
+ * Allocate and initialise an InputCtx.  If stdin is a tty, enables raw mode
+ * and writes the initial prompt to stdout.
+ * `on_line` is called each time a complete logical line (or EOF) is received.
+ * Returns NULL on allocation failure.
+ *
+ * The `prompt` string must remain valid for the lifetime of the context.
+ */
+InputCtx *input_ctx_new(Arena *arena, const char *prompt,
+                        input_line_cb on_line, void *userdata);
+
+/*
+ * Free the context and restore the terminal to cooked mode if raw mode was
+ * enabled.  Safe to call with NULL.
+ */
+void input_ctx_free(InputCtx *ctx);
+
+/*
+ * Prepare the context for the next input line.  Updates the prompt and arena,
+ * then writes the new prompt to stdout when the terminal is in raw mode.
+ *
+ * Call this after `on_line` fires, once the application is ready to accept
+ * the next line (e.g. after the AI response has finished streaming).
+ * The `prompt` string must remain valid until the next call to input_ctx_reset
+ * or input_ctx_free.
+ */
+void input_ctx_reset(InputCtx *ctx, Arena *arena, const char *prompt);
+
+/*
+ * loop_cb-compatible callback for stdin readability.  Register once with:
+ *
+ *   loop_add_fd(loop, STDIN_FILENO, LOOP_READ, input_on_readable, ctx);
+ *
+ * Drains all immediately available bytes from fd (required for edge-triggered
+ * epoll).  Returns 0 to remain in the loop, -1 on EOF (the loop removes the
+ * fd automatically).
+ */
+int input_on_readable(int fd, int events, void *ctx);
+
 #endif /* INPUT_H */

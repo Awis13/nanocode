@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/types.h>
 
 /* =========================================================================
  * History ring buffer
@@ -693,4 +694,367 @@ InputLine input_read(Arena *arena, const char *prompt)
         result.len  = accum_len;
     }
     return result;
+}
+
+/* =========================================================================
+ * Event-driven input context (CMP-181)
+ *
+ * Registers STDIN_FILENO with the main event loop so that input events are
+ * handled in the same loop_step() as API (streaming) events.  The blocking
+ * read_byte(fd, c, 0) call that previously stalled the loop is replaced by
+ * a loop_cb that drains all immediately available bytes on each readiness
+ * notification.
+ * ====================================================================== */
+
+struct InputCtx {
+    Arena         *arena;
+    const char    *prompt;   /* original prompt string (caller-owned) */
+    const char    *cprompt;  /* current prompt: prompt or "> " for continuation */
+
+    EditBuf        e;
+
+    char           accum[INPUT_LINE_MAX * 8]; /* multi-line accumulator */
+    size_t         accum_len;
+
+    int            hist_idx;                  /* g_hist_total = not browsing */
+    char           saved[INPUT_LINE_MAX];     /* saved line during history nav */
+    size_t         saved_len;
+
+    input_line_cb  on_line;
+    void          *userdata;
+};
+
+/* Reset all per-line editing state without touching on_line / arena / prompt. */
+static void ctx_reset_state(InputCtx *ctx)
+{
+    memset(&ctx->e, 0, sizeof(ctx->e));
+    ctx->accum_len  = 0;
+    ctx->accum[0]   = '\0';
+    ctx->cprompt    = ctx->prompt;
+    ctx->hist_idx   = g_hist_total;
+    ctx->saved_len  = 0;
+    ctx->saved[0]   = '\0';
+}
+
+InputCtx *input_ctx_new(Arena *arena, const char *prompt,
+                        input_line_cb on_line, void *userdata)
+{
+    InputCtx *ctx = calloc(1, sizeof(InputCtx));
+    if (!ctx) return NULL;
+
+    ctx->arena    = arena;
+    ctx->prompt   = prompt ? prompt : "";
+    ctx->on_line  = on_line;
+    ctx->userdata = userdata;
+    ctx_reset_state(ctx);
+
+    /* Enable raw mode and display the initial prompt when connected to a tty. */
+    if (isatty(STDIN_FILENO)) {
+        raw_enable(STDIN_FILENO);
+        write(STDOUT_FILENO, ctx->prompt, strlen(ctx->prompt));
+    }
+    return ctx;
+}
+
+void input_ctx_free(InputCtx *ctx)
+{
+    if (!ctx) return;
+    raw_restore();
+    free(ctx);
+}
+
+void input_ctx_reset(InputCtx *ctx, Arena *arena, const char *prompt)
+{
+    if (!ctx) return;
+    ctx->arena  = arena;
+    ctx->prompt = prompt ? prompt : "";
+    ctx_reset_state(ctx);
+    if (isatty(STDOUT_FILENO))
+        write(STDOUT_FILENO, ctx->prompt, strlen(ctx->prompt));
+}
+
+/*
+ * Append the current edit buffer to the accumulator and fire on_line.
+ * Resets per-line state and re-displays the prompt for the next line.
+ */
+static void ctx_emit_line(InputCtx *ctx)
+{
+    size_t avail   = sizeof(ctx->accum) - ctx->accum_len;
+    size_t to_copy = ctx->e.len < avail ? ctx->e.len : avail;
+    memcpy(ctx->accum + ctx->accum_len, ctx->e.buf, to_copy);
+    ctx->accum_len += to_copy;
+
+    InputLine result;
+    result.is_eof = 0;
+    result.len    = ctx->accum_len;
+    result.text   = NULL;
+    char *text = arena_alloc(ctx->arena, ctx->accum_len + 1);
+    if (text) {
+        memcpy(text, ctx->accum, ctx->accum_len);
+        text[ctx->accum_len] = '\0';
+        result.text = text;
+    }
+
+    ctx->on_line(result, ctx->userdata);
+
+    /* Reset for the next line. */
+    ctx_reset_state(ctx);
+    if (isatty(STDOUT_FILENO))
+        write(STDOUT_FILENO, ctx->prompt, strlen(ctx->prompt));
+}
+
+/*
+ * Process an Enter keypress: handle multi-line continuation or emit the line.
+ * Writes "\r\n" before taking action.
+ *
+ * Returns:
+ *   -1  EOF was signalled (from within ctx_emit_line, shouldn't happen here,
+ *       but keeps the signature consistent with the K_CTRL_D path)
+ *    0  continuation line started — caller may keep draining
+ *    1  complete line emitted — caller must stop draining and return 0
+ */
+static int ctx_handle_enter(InputCtx *ctx)
+{
+    write(STDOUT_FILENO, "\r\n", 2);
+
+    if (ctx->e.len > 0 && ctx->e.buf[ctx->e.len - 1] == '\\') {
+        /* Multi-line continuation: strip trailing '\', append to accumulator. */
+        ctx->e.len--;
+        ctx->e.buf[ctx->e.len] = '\0';
+
+        size_t avail   = sizeof(ctx->accum) - ctx->accum_len;
+        size_t to_copy = ctx->e.len < avail ? ctx->e.len : avail;
+        memcpy(ctx->accum + ctx->accum_len, ctx->e.buf, to_copy);
+        ctx->accum_len += to_copy;
+        if (ctx->accum_len < sizeof(ctx->accum) - 1)
+            ctx->accum[ctx->accum_len++] = '\n';
+
+        ctx->cprompt  = "> ";
+        ctx->hist_idx = g_hist_total;
+        memset(&ctx->e, 0, sizeof(ctx->e));
+        ctx->saved_len = 0;
+        ctx->saved[0]  = '\0';
+        write(STDOUT_FILENO, ctx->cprompt, strlen(ctx->cprompt));
+        return 0; /* continuation: keep draining */
+    } else {
+        ctx_emit_line(ctx);
+        return 1; /* line emitted: stop draining */
+    }
+}
+
+int input_on_readable(int fd, int events, void *ctx_)
+{
+    (void)events;
+    InputCtx *ctx = (InputCtx *)ctx_;
+
+    /*
+     * Drain all immediately available bytes.  This is required for
+     * edge-triggered epoll (Linux) — if bytes are left unread we won't
+     * receive another readiness notification until new data arrives.
+     * On macOS kqueue (level-triggered) it is an optimisation that
+     * processes bursts (paste, escape sequences) in a single callback.
+     *
+     * The first byte is guaranteed present by the event loop.  Each
+     * subsequent iteration is gated on data_avail() so we never block.
+     */
+    int first = 1;
+    while (first || data_avail(fd)) {
+        first = 0;
+
+        unsigned char c;
+        if (read(fd, &c, 1) != 1) {
+            /* EOF (read returned 0) or unrecoverable error. */
+            raw_restore();
+            write(STDOUT_FILENO, "\r\n", 2);
+            InputLine eof = {NULL, 0, 1};
+            ctx->on_line(eof, ctx->userdata);
+            return -1;
+        }
+
+        /* ---- paste detection ------------------------------------------- */
+        if (c >= 0x20 && c < 0x7f && data_avail(fd)) {
+            char paste[INPUT_LINE_MAX];
+            int  plen      = 0;
+            int  hit_enter = 0;
+            paste[plen++]  = (char)c;
+            while (plen < (int)sizeof(paste) - 1 && data_avail(fd)) {
+                unsigned char pc;
+                if (read(fd, &pc, 1) != 1) break;
+                if (pc == '\r' || pc == '\n') { hit_enter = 1; break; }
+                if (pc < 0x20) break; /* non-printable: stop, byte consumed */
+                paste[plen++] = (char)pc;
+            }
+            edit_insert_str(&ctx->e, paste, (size_t)plen);
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            if (hit_enter) {
+                int er = ctx_handle_enter(ctx);
+                if (er < 0) return -1;
+                if (er > 0) return 0; /* line emitted: stop draining */
+            }
+            continue;
+        }
+
+        /* ---- normal key ------------------------------------------------- */
+        Key key = parse_key(fd, c); /* may do short blocking reads for ESC */
+
+        switch (key.code) {
+
+        case K_CHAR:
+            edit_insert(&ctx->e, key.ch);
+            if (ctx->e.pos == ctx->e.len) {
+                char ch = key.ch;
+                write(STDOUT_FILENO, &ch, 1);
+            } else {
+                redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            }
+            break;
+
+        case K_ENTER: {
+            int er = ctx_handle_enter(ctx);
+            if (er < 0) return -1;
+            if (er > 0) return 0; /* line emitted: stop draining */
+            break;
+        }
+
+        case K_BACKSPACE:
+            if (ctx->e.pos > 0) {
+                edit_backspace(&ctx->e);
+                redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            }
+            break;
+
+        case K_DELETE:
+            if (ctx->e.pos < ctx->e.len) {
+                edit_delete(&ctx->e);
+                redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            }
+            break;
+
+        case K_LEFT:
+            if (ctx->e.pos > 0) {
+                edit_move_left(&ctx->e);
+                write(STDOUT_FILENO, "\033[D", 3);
+            }
+            break;
+
+        case K_RIGHT:
+            if (ctx->e.pos < ctx->e.len) {
+                edit_move_right(&ctx->e);
+                write(STDOUT_FILENO, "\033[C", 3);
+            }
+            break;
+
+        case K_HOME:
+            edit_move_home(&ctx->e);
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_END:
+            edit_move_end(&ctx->e);
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_UP: {
+            int steps = g_hist_total - ctx->hist_idx;
+            if (steps < g_hist_n) {
+                if (steps == 0) {
+                    memcpy(ctx->saved, ctx->e.buf, ctx->e.len + 1);
+                    ctx->saved_len = ctx->e.len;
+                }
+                ctx->hist_idx--;
+                steps++;
+                const char *hline = hist_peek(steps - 1);
+                if (hline) {
+                    edit_reset(&ctx->e);
+                    edit_insert_str(&ctx->e, hline, strlen(hline));
+                    redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+                }
+            }
+            break;
+        }
+
+        case K_DOWN: {
+            int steps = g_hist_total - ctx->hist_idx;
+            if (steps > 0) {
+                ctx->hist_idx++;
+                steps--;
+                if (steps == 0) {
+                    edit_reset(&ctx->e);
+                    edit_insert_str(&ctx->e, ctx->saved, ctx->saved_len);
+                } else {
+                    const char *hline = hist_peek(steps - 1);
+                    if (hline) {
+                        edit_reset(&ctx->e);
+                        edit_insert_str(&ctx->e, hline, strlen(hline));
+                    }
+                }
+                redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            }
+            break;
+        }
+
+        case K_TAB:
+            input_tab_complete(&ctx->e);
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_CTRL_C:
+            memset(&ctx->e, 0, sizeof(ctx->e));
+            ctx->hist_idx  = g_hist_total;
+            ctx->saved_len = 0;
+            ctx->saved[0]  = '\0';
+            write(STDOUT_FILENO, "^C\r\n", 4);
+            write(STDOUT_FILENO, ctx->cprompt, strlen(ctx->cprompt));
+            break;
+
+        case K_CTRL_D:
+            if (ctx->e.len == 0 && ctx->accum_len == 0) {
+                write(STDOUT_FILENO, "\r\n", 2);
+                raw_restore();
+                InputLine eof = {NULL, 0, 1};
+                ctx->on_line(eof, ctx->userdata);
+                return -1;
+            }
+            /* Delete-forward when buffer is non-empty. */
+            if (ctx->e.pos < ctx->e.len) {
+                edit_delete(&ctx->e);
+                redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            }
+            break;
+
+        case K_CTRL_K:
+            ctx->e.len = ctx->e.pos;
+            ctx->e.buf[ctx->e.len] = '\0';
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_CTRL_U:
+            memmove(ctx->e.buf, ctx->e.buf + ctx->e.pos,
+                    ctx->e.len - ctx->e.pos);
+            ctx->e.len -= ctx->e.pos;
+            ctx->e.pos  = 0;
+            ctx->e.buf[ctx->e.len] = '\0';
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_CTRL_W:
+            while (ctx->e.pos > 0 && ctx->e.buf[ctx->e.pos - 1] == ' ')
+                edit_backspace(&ctx->e);
+            while (ctx->e.pos > 0 && ctx->e.buf[ctx->e.pos - 1] != ' ')
+                edit_backspace(&ctx->e);
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_CTRL_L:
+            write(STDOUT_FILENO, "\033[2J\033[H", 7);
+            redraw_line(STDOUT_FILENO, ctx->cprompt, &ctx->e);
+            break;
+
+        case K_NONE:
+        default:
+            break;
+        }
+    }
+
+    return 0;
 }

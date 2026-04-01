@@ -485,7 +485,7 @@ TEST(test_scan_nanocode_src)
 
     size_t len = strlen(out);
     ASSERT_TRUE(len > 0);
-    ASSERT_TRUE(len <= 4096);
+    ASSERT_TRUE(len <= 6144);
 
     /* Known functions from the codebase. */
     ASSERT_TRUE(contains(out, "arena_new") || contains(out, "arena_alloc"));

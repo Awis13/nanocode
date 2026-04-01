@@ -30,9 +30,16 @@ typedef struct {
  * Platform-specific backend
  * ---------------------------------------------------------------------- */
 
+/* Flag to mark timer-backed entries (no real fd). */
+#define LOOP_TIMER  (1 << 2)
+
 #ifdef __APPLE__
 #include <sys/event.h>
 #include <sys/time.h>
+
+/* Synthetic identifiers for kqueue EVFILT_TIMER (not real fds).
+ * Start well above any plausible fd number. */
+static int g_timer_next_id = 0x1000000;
 
 struct Loop {
     int      kq;
@@ -156,8 +163,18 @@ int loop_step(Loop *l, int timeout_ms)
     }
 
     for (int i = 0; i < n; i++) {
-        int ev_fd = (int)events[i].ident;
+        int ev_fd = (int)(uintptr_t)events[i].ident;
         int ev    = 0;
+
+        if (events[i].filter == EVFILT_TIMER) {
+            /* One-shot timer fired — call callback and remove entry. */
+            FdEntry *e = find_entry(l, ev_fd);
+            if (e)
+                e->cb(ev_fd, 0, e->ctx);
+            loop_remove_fd(l, ev_fd);
+            continue;
+        }
+
         if (events[i].filter == EVFILT_READ)  ev |= LOOP_READ;
         if (events[i].filter == EVFILT_WRITE) ev |= LOOP_WRITE;
 
@@ -172,9 +189,40 @@ int loop_step(Loop *l, int timeout_ms)
     return n;
 }
 
+int loop_add_timer(Loop *l, int delay_ms, loop_cb cb, void *ctx)
+{
+    if (l->nentries >= MAX_FDS)
+        return -1;
+
+    int id = g_timer_next_id++;
+    struct kevent kev;
+    EV_SET(&kev, (uintptr_t)id, EVFILT_TIMER,
+           EV_ADD | EV_ONESHOT, NOTE_USECONDS, (intptr_t)delay_ms * 1000, NULL);
+    if (kevent(l->kq, &kev, 1, NULL, 0, NULL) < 0)
+        return -1;
+
+    FdEntry *e = &l->entries[l->nentries++];
+    e->fd    = id;
+    e->flags = LOOP_TIMER;
+    e->cb    = cb;
+    e->ctx   = ctx;
+    return id;
+}
+
+void loop_cancel_timer(Loop *l, int timer_id)
+{
+    /* Remove from kqueue (EV_ONESHOT may have already removed it; ignore err) */
+    struct kevent kev;
+    EV_SET(&kev, (uintptr_t)timer_id, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+    kevent(l->kq, &kev, 1, NULL, 0, NULL);
+    loop_remove_fd(l, timer_id);
+}
+
 #else  /* Linux — epoll */
 
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
+#include <stdint.h>
 
 struct Loop {
     int      epfd;
@@ -280,11 +328,50 @@ int loop_step(Loop *l, int timeout_ms)
         if (!e)
             continue;
 
+        if (e->flags & LOOP_TIMER) {
+            /* Drain the timerfd so it doesn't stay readable. */
+            uint64_t exp;
+            (void)read(ev_fd, &exp, sizeof(exp));
+            e->cb(ev_fd, 0, e->ctx);
+            /* One-shot: remove from epoll and close the timerfd. */
+            loop_remove_fd(l, ev_fd);
+            close(ev_fd);
+            continue;
+        }
+
         int r = e->cb(ev_fd, ev, e->ctx);
         if (r < 0)
             loop_remove_fd(l, ev_fd);
     }
     return n;
+}
+
+int loop_add_timer(Loop *l, int delay_ms, loop_cb cb, void *ctx)
+{
+    int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (tfd < 0)
+        return -1;
+
+    struct itimerspec its;
+    memset(&its, 0, sizeof(its));
+    its.it_value.tv_sec  = delay_ms / 1000;
+    its.it_value.tv_nsec = (long)(delay_ms % 1000) * 1000000L;
+    if (timerfd_settime(tfd, 0, &its, NULL) < 0) {
+        close(tfd);
+        return -1;
+    }
+
+    if (loop_add_fd(l, tfd, LOOP_READ | LOOP_TIMER, cb, ctx) < 0) {
+        close(tfd);
+        return -1;
+    }
+    return tfd;
+}
+
+void loop_cancel_timer(Loop *l, int timer_fd)
+{
+    loop_remove_fd(l, timer_fd);
+    close(timer_fd);
 }
 
 #endif  /* platform */

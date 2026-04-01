@@ -49,6 +49,7 @@ typedef struct {
     int          nheaders;
     const char  *body;               /* request body (may be NULL) */
     size_t       body_len;
+    int          timeout_ms;         /* connection+response timeout (0 = 30s) */
     http_body_cb on_body;            /* called for each response chunk */
     http_done_cb on_done;            /* called on completion/error */
     void        *cb_ctx;             /* passed to callbacks */

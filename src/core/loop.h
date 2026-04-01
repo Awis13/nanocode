@@ -66,4 +66,25 @@ void  loop_stop(Loop *l);
 /* Make `fd` non-blocking. Returns 0 on success, -1 on error. */
 int   fd_set_nonblocking(int fd);
 
+/*
+ * Schedule a one-shot callback after `delay_ms` milliseconds.
+ *
+ * When the timer fires, cb(timer_id, 0, ctx) is called.  The timer is
+ * automatically removed from the loop after it fires (one-shot).
+ *
+ * On Linux the returned identifier is a timerfd file descriptor.
+ * On macOS it is a synthetic integer identifier (not an fd).
+ * Callers should treat it as an opaque handle and only pass it to
+ * loop_cancel_timer().
+ *
+ * Returns a timer identifier (> 0) on success, -1 on error.
+ */
+int   loop_add_timer(Loop *l, int delay_ms, loop_cb cb, void *ctx);
+
+/*
+ * Cancel a pending timer.  Safe to call if the timer has already fired.
+ * `timer_id` must be a value returned by loop_add_timer().
+ */
+void  loop_cancel_timer(Loop *l, int timer_id);
+
 #endif /* LOOP_H */

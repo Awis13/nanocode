@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 /* -------------------------------------------------------------------------
  * Per-fd entry
@@ -384,6 +385,21 @@ void loop_run(Loop *l)
 {
     l->running = 1;
     while (l->running) {
+        /*
+         * Zombie reaping sweep (CMP-183).
+         *
+         * bash.c reaps its own children via blocking waitpid() before
+         * returning to the loop, so zombies here are rare.  This sweep
+         * catches any that slip through — e.g. after SIGKILL of a timed-out
+         * child process group — without blocking the loop.
+         *
+         * SIGCHLD is intentionally left at SIG_DFL so that bash.c's
+         * explicit waitpid() can still collect exit status; this non-blocking
+         * sweep is a safety net only.
+         */
+        while (waitpid(-1, NULL, WNOHANG) > 0)
+            ;
+
         if (loop_step(l, 100) < 0)
             break;
     }

@@ -27,6 +27,7 @@ typedef struct {
 
 static ToolEntry s_registry[TOOL_REGISTRY_MAX];
 static int       s_count = 0;
+static ExecMode  s_exec_mode = EXEC_MODE_NORMAL;
 
 void tool_register(const char *name, const char *schema_json, ToolHandler fn)
 {
@@ -46,7 +47,18 @@ void tool_register(const char *name, const char *schema_json, ToolHandler fn)
 
 void tool_registry_reset(void)
 {
-    s_count = 0;
+    s_count    = 0;
+    s_exec_mode = EXEC_MODE_NORMAL;
+}
+
+void executor_set_mode(ExecMode mode)
+{
+    s_exec_mode = mode;
+}
+
+ExecMode executor_get_mode(void)
+{
+    return s_exec_mode;
 }
 
 int tool_list_names(const char **names, int max_names)
@@ -65,6 +77,25 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
 {
     assert(arena != NULL);
     assert(name  != NULL);
+
+    /* Plan mode: block write/execute tools. */
+    if (s_exec_mode == EXEC_MODE_PLAN) {
+        static const char *const s_blocked[] = {
+            "bash", "write_file", "edit_file", NULL
+        };
+        for (int j = 0; s_blocked[j]; j++) {
+            if (strcmp(name, s_blocked[j]) == 0) {
+                static const char msg[] =
+                    "{\"error\":\"tool blocked in plan mode\","
+                    "\"hint\":\"use /plan to toggle plan mode off\"}";
+                size_t mlen = sizeof(msg) - 1;
+                char  *buf  = arena_alloc(arena, mlen + 1);
+                if (buf) memcpy(buf, msg, mlen + 1);
+                ToolResult r = { .error = 1, .content = buf, .len = mlen };
+                return r;
+            }
+        }
+    }
 
     for (int i = 0; i < s_count; i++) {
         if (strcmp(s_registry[i].name, name) == 0)

@@ -161,7 +161,8 @@ void edit_move_end(EditBuf *e)   { e->pos = e->len; }
  * ====================================================================== */
 
 static const char *const s_commands[] = {
-    "/apply", "/clear", "/diff", "/help", "/mcp", "/model", "/save", NULL
+    "/apply", "/clear", "/diff", "/help", "/mcp", "/memory", "/model",
+    "/plan", "/save", NULL
 };
 
 void input_tab_complete(EditBuf *e)

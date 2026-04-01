@@ -13,6 +13,7 @@
 #include "prompt.h"
 #include "git.h"
 #include "../tools/executor.h"
+#include "../tools/memory.h"
 #include "../util/buf.h"
 
 #include <stdio.h>
@@ -160,6 +161,20 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec)
                 buf_append_str(&b, "\n");
             buf_append_str(&b, "\n");
             break; /* use first one found */
+        }
+    }
+
+    /* ------------------------------------------------------------------
+     * 3b. Cross-session memory injection
+     * ------------------------------------------------------------------ */
+    {
+        char *mem = memory_load(arena);
+        if (mem && mem[0]) {
+            buf_append_str(&b, "## Memory\n");
+            buf_append_str(&b, mem);
+            if (b.len > 0 && b.data[b.len - 1] != '\n')
+                buf_append_str(&b, "\n");
+            buf_append_str(&b, "\n");
         }
     }
 

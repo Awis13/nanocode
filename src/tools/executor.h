@@ -14,6 +14,20 @@
 /* Hard cap on number of registered tools. */
 #define TOOL_REGISTRY_MAX 64
 
+/*
+ * Execution mode — controls which tools are permitted to run.
+ * EXEC_MODE_NORMAL : all registered tools may be invoked.
+ * EXEC_MODE_PLAN   : write/execute tools (bash, write_file, edit_file) are
+ *                    blocked; the model may only read and reason.
+ */
+typedef enum {
+    EXEC_MODE_NORMAL = 0,
+    EXEC_MODE_PLAN   = 1
+} ExecMode;
+
+void     executor_set_mode(ExecMode mode);
+ExecMode executor_get_mode(void);
+
 /* Result returned by every tool handler and by tool_invoke(). */
 typedef struct {
     int     error;    /* 0 = success, non-zero = failure */

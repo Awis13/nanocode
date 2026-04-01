@@ -47,7 +47,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_oom tests/test_retry tests/test_conversation \
              tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
              tests/test_config tests/test_mcp tests/test_tool_display \
-             tests/test_session tests/test_loop
+             tests/test_session tests/test_loop tests/test_memory
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -102,8 +102,8 @@ tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
 
 # CMP-121: system prompt builder
 tests/test_prompt: tests/test_prompt.c src/agent/prompt.c src/agent/git.c \
-                   src/tools/executor.c src/util/arena.c src/util/buf.c \
-                   src/util/json.c
+                   src/tools/executor.c src/tools/memory.c src/util/arena.c \
+                   src/util/buf.c src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-126: input system — line editor, history, tab completion
@@ -139,6 +139,11 @@ tests/test_session: tests/test_session.c src/core/session.c
 
 # CMP-180: event loop fd lookup optimization — O(1) bitmap-indexed sparse array
 tests/test_loop: tests/test_loop.c src/core/loop.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-153: cross-session memory — memory_write tool and memory_load
+tests/test_memory: tests/test_memory.c src/tools/memory.c src/tools/executor.c \
+                   src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

@@ -442,6 +442,121 @@ TEST(test_tool_search_schema_roundtrip) {
     arena_free(a);
 }
 
+/* -------------------------------------------------------------------------
+ * Plan mode
+ * ---------------------------------------------------------------------- */
+
+TEST(test_plan_mode_blocks_bash) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{}", handler_noop);
+    executor_set_mode(EXEC_MODE_PLAN);
+
+    ToolResult r = tool_invoke(a, "bash", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "plan mode") != NULL);
+
+    executor_set_mode(EXEC_MODE_NORMAL);
+    arena_free(a);
+}
+
+TEST(test_plan_mode_blocks_write_file) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("write_file", "{}", handler_noop);
+    executor_set_mode(EXEC_MODE_PLAN);
+
+    ToolResult r = tool_invoke(a, "write_file", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "plan mode") != NULL);
+
+    executor_set_mode(EXEC_MODE_NORMAL);
+    arena_free(a);
+}
+
+TEST(test_plan_mode_blocks_edit_file) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("edit_file", "{}", handler_noop);
+    executor_set_mode(EXEC_MODE_PLAN);
+
+    ToolResult r = tool_invoke(a, "edit_file", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "plan mode") != NULL);
+
+    executor_set_mode(EXEC_MODE_NORMAL);
+    arena_free(a);
+}
+
+TEST(test_plan_mode_allows_read_tools) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("read_file", "{}", handler_noop);
+    tool_register("grep", "{}", handler_noop);
+    tool_register("glob", "{}", handler_noop);
+    executor_set_mode(EXEC_MODE_PLAN);
+
+    ToolResult r1 = tool_invoke(a, "read_file", "{}");
+    ASSERT_EQ(r1.error, 0);
+
+    ToolResult r2 = tool_invoke(a, "grep", "{}");
+    ASSERT_EQ(r2.error, 0);
+
+    ToolResult r3 = tool_invoke(a, "glob", "{}");
+    ASSERT_EQ(r3.error, 0);
+
+    executor_set_mode(EXEC_MODE_NORMAL);
+    arena_free(a);
+}
+
+TEST(test_plan_mode_toggle_restores_normal) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{}", handler_noop);
+    executor_set_mode(EXEC_MODE_PLAN);
+
+    ToolResult r1 = tool_invoke(a, "bash", "{}");
+    ASSERT_EQ(r1.error, 1);
+
+    executor_set_mode(EXEC_MODE_NORMAL);
+    ToolResult r2 = tool_invoke(a, "bash", "{}");
+    ASSERT_EQ(r2.error, 0);
+
+    arena_free(a);
+}
+
+TEST(test_registry_reset_clears_plan_mode) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{}", handler_noop);
+    executor_set_mode(EXEC_MODE_PLAN);
+    ASSERT_EQ(executor_get_mode(), EXEC_MODE_PLAN);
+
+    tool_registry_reset();
+    tool_register("bash", "{}", handler_noop);
+    ASSERT_EQ(executor_get_mode(), EXEC_MODE_NORMAL);
+
+    ToolResult r = tool_invoke(a, "bash", "{}");
+    ASSERT_EQ(r.error, 0);
+
+    arena_free(a);
+}
+
 int main(void)
 {
     fprintf(stderr, "=== test_executor ===\n");
@@ -473,6 +588,13 @@ int main(void)
     RUN_TEST(test_tool_search_unknown_name_returns_error);
     RUN_TEST(test_tool_search_missing_name_arg_returns_error);
     RUN_TEST(test_tool_search_schema_roundtrip);
+
+    RUN_TEST(test_plan_mode_blocks_bash);
+    RUN_TEST(test_plan_mode_blocks_write_file);
+    RUN_TEST(test_plan_mode_blocks_edit_file);
+    RUN_TEST(test_plan_mode_allows_read_tools);
+    RUN_TEST(test_plan_mode_toggle_restores_normal);
+    RUN_TEST(test_registry_reset_clears_plan_mode);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

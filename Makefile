@@ -43,8 +43,7 @@ TEST_LDFLAGS :=
 
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
-             tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
-             tests/test_oom tests/test_retry
+             tests/test_renderer tests/test_statusbar tests/test_diff_sandbox
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -82,6 +81,14 @@ tests/test_statusbar: tests/test_statusbar.c src/tui/statusbar.c
 
 tests/test_diff_sandbox: tests/test_diff_sandbox.c src/tools/diff_sandbox.c \
                           src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-144: OOM protection — requires arena_alloc to return NULL on exhaustion
+tests/test_oom: tests/test_oom.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-144: retry/backoff — requires src/api/retry.c implementation
+tests/test_retry: tests/test_retry.c src/api/retry.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

@@ -2,6 +2,11 @@
  * loop.c — event loop implementation
  *
  * Uses kqueue on macOS/BSD and epoll on Linux.
+ *
+ * fd lookup is O(1): entries are stored in a sparse array indexed by fd number,
+ * with a 256-bit occupancy bitmap.  macOS synthetic timer IDs (>= 0x1000000)
+ * are kept in a separate compact timer_table since they cannot be used as
+ * array indices.
  */
 
 #include "loop.h"
@@ -18,14 +23,36 @@
  * Per-fd entry
  * ---------------------------------------------------------------------- */
 
-#define MAX_FDS 256
+#define MAX_FDS    256
+#define MAX_TIMERS  32   /* macOS only: max concurrent one-shot timers */
 
 typedef struct {
     int      fd;
-    int      flags;   /* LOOP_READ | LOOP_WRITE */
+    int      flags;   /* LOOP_READ | LOOP_WRITE | LOOP_TIMER */
     loop_cb  cb;
     void    *ctx;
 } FdEntry;
+
+/* -------------------------------------------------------------------------
+ * Bitmap helpers — 256-bit occupancy map (8 x uint32_t)
+ * ---------------------------------------------------------------------- */
+
+#include <stdint.h>
+
+static inline void bitmap_set(uint32_t *bm, int fd)
+{
+    bm[(unsigned)fd >> 5] |= 1u << ((unsigned)fd & 31u);
+}
+
+static inline void bitmap_clr(uint32_t *bm, int fd)
+{
+    bm[(unsigned)fd >> 5] &= ~(1u << ((unsigned)fd & 31u));
+}
+
+static inline int bitmap_tst(const uint32_t *bm, int fd)
+{
+    return !!(bm[(unsigned)fd >> 5] & (1u << ((unsigned)fd & 31u)));
+}
 
 /* -------------------------------------------------------------------------
  * Platform-specific backend
@@ -45,8 +72,12 @@ static int g_timer_next_id = 0x1000000;
 struct Loop {
     int      kq;
     int      running;
-    FdEntry  entries[MAX_FDS];
-    int      nentries;
+    /* Direct-indexed fd table: entries[fd] is valid iff bitmap bit is set. */
+    FdEntry  fd_table[MAX_FDS];
+    uint32_t fd_bitmap[MAX_FDS / 32];  /* 8 x uint32_t = 256 bits */
+    /* Synthetic kqueue timer IDs live here (cannot be fd-indexed). */
+    FdEntry  timer_table[MAX_TIMERS];
+    int      ntimers;
 };
 
 Loop *loop_new(void)
@@ -59,8 +90,6 @@ Loop *loop_new(void)
         free(l);
         return NULL;
     }
-    l->running = 0;
-    l->nentries = 0;
     return l;
 }
 
@@ -70,11 +99,15 @@ void loop_free(Loop *l)
     free(l);
 }
 
-static FdEntry *find_entry(Loop *l, int fd)
+static FdEntry *find_entry(Loop *l, int id)
 {
-    for (int i = 0; i < l->nentries; i++)
-        if (l->entries[i].fd == fd)
-            return &l->entries[i];
+    if (id >= 0 && id < MAX_FDS) {
+        return bitmap_tst(l->fd_bitmap, id) ? &l->fd_table[id] : NULL;
+    }
+    /* Synthetic timer ID — linear search (small list, rare path). */
+    for (int i = 0; i < l->ntimers; i++)
+        if (l->timer_table[i].fd == id)
+            return &l->timer_table[i];
     return NULL;
 }
 
@@ -105,39 +138,47 @@ static int kq_update(Loop *l, int fd, int old_flags, int new_flags)
 
 int loop_add_fd(Loop *l, int fd, int flags, loop_cb cb, void *ctx)
 {
-    if (l->nentries >= MAX_FDS) {
-        fprintf(stderr, "loop: MAX_FDS reached\n");
+    if (fd < 0 || fd >= MAX_FDS) {
+        fprintf(stderr, "loop: fd %d out of range\n", fd);
         return -1;
     }
     if (kq_update(l, fd, 0, flags) < 0)
         return -1;
 
-    FdEntry *e  = &l->entries[l->nentries++];
+    FdEntry *e = &l->fd_table[fd];
     e->fd    = fd;
     e->flags = flags;
     e->cb    = cb;
     e->ctx   = ctx;
+    bitmap_set(l->fd_bitmap, fd);
     return 0;
 }
 
 int loop_mod_fd(Loop *l, int fd, int flags)
 {
-    FdEntry *e = find_entry(l, fd);
-    if (!e)
+    if (fd < 0 || fd >= MAX_FDS || !bitmap_tst(l->fd_bitmap, fd))
         return -1;
+    FdEntry *e = &l->fd_table[fd];
     if (kq_update(l, fd, e->flags, flags) < 0)
         return -1;
     e->flags = flags;
     return 0;
 }
 
-int loop_remove_fd(Loop *l, int fd)
+int loop_remove_fd(Loop *l, int id)
 {
-    for (int i = 0; i < l->nentries; i++) {
-        if (l->entries[i].fd == fd) {
-            kq_update(l, fd, l->entries[i].flags, 0);
-            /* compact the array */
-            l->entries[i] = l->entries[--l->nentries];
+    if (id >= 0 && id < MAX_FDS) {
+        if (!bitmap_tst(l->fd_bitmap, id))
+            return -1;
+        kq_update(l, id, l->fd_table[id].flags, 0);
+        bitmap_clr(l->fd_bitmap, id);
+        memset(&l->fd_table[id], 0, sizeof(FdEntry));
+        return 0;
+    }
+    /* Synthetic timer ID — compact the timer_table. */
+    for (int i = 0; i < l->ntimers; i++) {
+        if (l->timer_table[i].fd == id) {
+            l->timer_table[i] = l->timer_table[--l->ntimers];
             return 0;
         }
     }
@@ -192,7 +233,7 @@ int loop_step(Loop *l, int timeout_ms)
 
 int loop_add_timer(Loop *l, int delay_ms, loop_cb cb, void *ctx)
 {
-    if (l->nentries >= MAX_FDS)
+    if (l->ntimers >= MAX_TIMERS)
         return -1;
 
     int id = g_timer_next_id++;
@@ -202,7 +243,7 @@ int loop_add_timer(Loop *l, int delay_ms, loop_cb cb, void *ctx)
     if (kevent(l->kq, &kev, 1, NULL, 0, NULL) < 0)
         return -1;
 
-    FdEntry *e = &l->entries[l->nentries++];
+    FdEntry *e = &l->timer_table[l->ntimers++];
     e->fd    = id;
     e->flags = LOOP_TIMER;
     e->cb    = cb;
@@ -223,13 +264,13 @@ void loop_cancel_timer(Loop *l, int timer_id)
 
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
-#include <stdint.h>
 
 struct Loop {
     int      epfd;
     int      running;
-    FdEntry  entries[MAX_FDS];
-    int      nentries;
+    /* Direct-indexed fd table: fd_table[fd] is valid iff bitmap bit is set. */
+    FdEntry  fd_table[MAX_FDS];
+    uint32_t fd_bitmap[MAX_FDS / 32];  /* 8 x uint32_t = 256 bits */
 };
 
 Loop *loop_new(void)
@@ -253,10 +294,9 @@ void loop_free(Loop *l)
 
 static FdEntry *find_entry(Loop *l, int fd)
 {
-    for (int i = 0; i < l->nentries; i++)
-        if (l->entries[i].fd == fd)
-            return &l->entries[i];
-    return NULL;
+    if (fd < 0 || fd >= MAX_FDS || !bitmap_tst(l->fd_bitmap, fd))
+        return NULL;
+    return &l->fd_table[fd];
 }
 
 static uint32_t flags_to_epoll(int flags)
@@ -269,26 +309,29 @@ static uint32_t flags_to_epoll(int flags)
 
 int loop_add_fd(Loop *l, int fd, int flags, loop_cb cb, void *ctx)
 {
-    if (l->nentries >= MAX_FDS)
+    if (fd < 0 || fd >= MAX_FDS) {
+        fprintf(stderr, "loop: fd %d out of range\n", fd);
         return -1;
+    }
 
     struct epoll_event ev = { .events = flags_to_epoll(flags), .data.fd = fd };
     if (epoll_ctl(l->epfd, EPOLL_CTL_ADD, fd, &ev) < 0)
         return -1;
 
-    FdEntry *e  = &l->entries[l->nentries++];
+    FdEntry *e = &l->fd_table[fd];
     e->fd    = fd;
     e->flags = flags;
     e->cb    = cb;
     e->ctx   = ctx;
+    bitmap_set(l->fd_bitmap, fd);
     return 0;
 }
 
 int loop_mod_fd(Loop *l, int fd, int flags)
 {
-    FdEntry *e = find_entry(l, fd);
-    if (!e)
+    if (fd < 0 || fd >= MAX_FDS || !bitmap_tst(l->fd_bitmap, fd))
         return -1;
+    FdEntry *e = &l->fd_table[fd];
     struct epoll_event ev = { .events = flags_to_epoll(flags), .data.fd = fd };
     if (epoll_ctl(l->epfd, EPOLL_CTL_MOD, fd, &ev) < 0)
         return -1;
@@ -298,14 +341,12 @@ int loop_mod_fd(Loop *l, int fd, int flags)
 
 int loop_remove_fd(Loop *l, int fd)
 {
-    for (int i = 0; i < l->nentries; i++) {
-        if (l->entries[i].fd == fd) {
-            epoll_ctl(l->epfd, EPOLL_CTL_DEL, fd, NULL);
-            l->entries[i] = l->entries[--l->nentries];
-            return 0;
-        }
-    }
-    return -1;
+    if (fd < 0 || fd >= MAX_FDS || !bitmap_tst(l->fd_bitmap, fd))
+        return -1;
+    epoll_ctl(l->epfd, EPOLL_CTL_DEL, fd, NULL);
+    bitmap_clr(l->fd_bitmap, fd);
+    memset(&l->fd_table[fd], 0, sizeof(FdEntry));
+    return 0;
 }
 
 int loop_step(Loop *l, int timeout_ms)

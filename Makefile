@@ -47,7 +47,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_oom tests/test_retry tests/test_conversation \
              tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
              tests/test_config tests/test_mcp tests/test_tool_display \
-             tests/test_session
+             tests/test_session tests/test_loop
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -135,6 +135,10 @@ tests/test_tool_display: tests/test_tool_display.c src/tui/tool_display.c \
 
 # CMP-183: session event log — bounded NDJSON with rotation
 tests/test_session: tests/test_session.c src/core/session.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-180: event loop fd lookup optimization — O(1) bitmap-indexed sparse array
+tests/test_loop: tests/test_loop.c src/core/loop.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

@@ -42,7 +42,7 @@ TEST_CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -g -O0 -DDEBUG
 TEST_LDFLAGS :=
 
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json \
-             tests/test_renderer
+             tests/test_renderer tests/test_statusbar
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -55,6 +55,9 @@ tests/test_json: tests/test_json.c src/util/json.c
 
 tests/test_renderer: tests/test_renderer.c src/tui/renderer.c \
                      src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_statusbar: tests/test_statusbar.c src/tui/statusbar.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

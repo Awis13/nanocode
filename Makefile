@@ -46,7 +46,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
              tests/test_oom tests/test_retry tests/test_conversation \
              tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
-             tests/test_config tests/test_mcp
+             tests/test_config tests/test_mcp tests/test_tool_display
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -125,6 +125,11 @@ tests/test_config: tests/test_config.c src/core/config.c src/util/arena.c
 # CMP-150: MCP client — JSON-RPC 2.0, tool discovery, config
 tests/test_mcp: tests/test_mcp.c src/agent/mcp.c src/tools/executor.c \
                 src/util/arena.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-124: tool output display — invocation header, result truncation, diff colouring
+tests/test_tool_display: tests/test_tool_display.c src/tui/tool_display.c \
+                         src/tools/executor.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

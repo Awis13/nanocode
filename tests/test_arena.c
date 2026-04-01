@@ -109,10 +109,10 @@ TEST(test_arena_large_alloc) {
 }
 
 TEST(test_arena_size_rounds_up_to_page) {
-    /* Even a 1-byte arena gets at least one page */
+    /* Even a 1-byte arena maps at least one page (mapsize is page-rounded) */
     Arena *a = arena_new(1);
     ASSERT_NOT_NULL(a);
-    ASSERT_TRUE(a->size >= 4096);
+    ASSERT_TRUE(a->mapsize >= 4096);
     arena_free(a);
 }
 

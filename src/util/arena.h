@@ -20,7 +20,7 @@ typedef struct {
 /* Allocate a new arena of at least `size` bytes. Returns NULL on failure. */
 Arena *arena_new(size_t size);
 
-/* Allocate `size` bytes from the arena. Aborts on OOM. */
+/* Allocate `size` bytes from the arena. Returns NULL on OOM (no abort). */
 void  *arena_alloc(Arena *a, size_t size);
 
 /* Reset the bump pointer — all memory is reusable but NOT zeroed. */

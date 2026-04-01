@@ -260,6 +260,188 @@ TEST(test_result_to_json_empty_content) {
     arena_free(a);
 }
 
+/* -------------------------------------------------------------------------
+ * tool_names_json
+ * ---------------------------------------------------------------------- */
+
+TEST(test_tool_names_json_empty) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    char *json = tool_names_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "[]");
+
+    arena_free(a);
+}
+
+TEST(test_tool_names_json_single_tool) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+
+    char *json = tool_names_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "[{\"name\":\"bash\"}]");
+
+    arena_free(a);
+}
+
+TEST(test_tool_names_json_multiple_tools) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+    tool_register("grep", "{\"name\":\"grep\"}", handler_noop);
+
+    char *json = tool_names_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_TRUE(strstr(json, "{\"name\":\"bash\"}") != NULL);
+    ASSERT_TRUE(strstr(json, "{\"name\":\"grep\"}") != NULL);
+    ASSERT_EQ(json[0], '[');
+    ASSERT_EQ(json[strlen(json) - 1], ']');
+
+    arena_free(a);
+}
+
+TEST(test_tool_names_json_excludes_tool_search) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+    tool_search_register();
+
+    char *json = tool_names_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_TRUE(strstr(json, "\"bash\"") != NULL);
+    ASSERT_TRUE(strstr(json, "tool_search") == NULL);
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * tool_schemas_json
+ * ---------------------------------------------------------------------- */
+
+TEST(test_tool_schemas_json_empty) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    char *json = tool_schemas_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "[]");
+
+    arena_free(a);
+}
+
+TEST(test_tool_schemas_json_includes_full_schema) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("mytool",
+                  "{\"name\":\"mytool\",\"description\":\"does stuff\"}",
+                  handler_noop);
+
+    char *json = tool_schemas_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_TRUE(strstr(json, "\"does stuff\"") != NULL);
+    ASSERT_EQ(json[0], '[');
+    ASSERT_EQ(json[strlen(json) - 1], ']');
+
+    arena_free(a);
+}
+
+TEST(test_tool_schemas_json_includes_tool_search) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+    tool_search_register();
+
+    char *json = tool_schemas_json(a);
+    ASSERT_NOT_NULL(json);
+    ASSERT_TRUE(strstr(json, "\"tool_search\"") != NULL);
+    ASSERT_TRUE(strstr(json, "\"bash\"") != NULL);
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * tool_search handler
+ * ---------------------------------------------------------------------- */
+
+TEST(test_tool_search_returns_schema) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("mytool",
+                  "{\"name\":\"mytool\",\"description\":\"test tool\"}",
+                  handler_noop);
+    tool_search_register();
+
+    ToolResult r = tool_invoke(a, "tool_search", "{\"name\":\"mytool\"}");
+    ASSERT_EQ(r.error, 0);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "\"test tool\"") != NULL);
+
+    arena_free(a);
+}
+
+TEST(test_tool_search_unknown_name_returns_error) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_search_register();
+
+    ToolResult r = tool_invoke(a, "tool_search", "{\"name\":\"no_such_tool\"}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "no_such_tool") != NULL);
+
+    arena_free(a);
+}
+
+TEST(test_tool_search_missing_name_arg_returns_error) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_search_register();
+
+    ToolResult r = tool_invoke(a, "tool_search", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+
+    arena_free(a);
+}
+
+TEST(test_tool_search_schema_roundtrip) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    const char *schema = "{\"name\":\"round\",\"description\":\"roundtrip\"}";
+    tool_register("round", schema, handler_noop);
+    tool_search_register();
+
+    ToolResult r = tool_invoke(a, "tool_search", "{\"name\":\"round\"}");
+    ASSERT_EQ(r.error, 0);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_STR_EQ(r.content, schema);
+
+    arena_free(a);
+}
+
 int main(void)
 {
     fprintf(stderr, "=== test_executor ===\n");
@@ -277,6 +459,20 @@ int main(void)
     RUN_TEST(test_result_to_json_escapes_backslash);
     RUN_TEST(test_result_to_json_escapes_newline);
     RUN_TEST(test_result_to_json_empty_content);
+
+    RUN_TEST(test_tool_names_json_empty);
+    RUN_TEST(test_tool_names_json_single_tool);
+    RUN_TEST(test_tool_names_json_multiple_tools);
+    RUN_TEST(test_tool_names_json_excludes_tool_search);
+
+    RUN_TEST(test_tool_schemas_json_empty);
+    RUN_TEST(test_tool_schemas_json_includes_full_schema);
+    RUN_TEST(test_tool_schemas_json_includes_tool_search);
+
+    RUN_TEST(test_tool_search_returns_schema);
+    RUN_TEST(test_tool_search_unknown_name_returns_error);
+    RUN_TEST(test_tool_search_missing_name_arg_returns_error);
+    RUN_TEST(test_tool_search_schema_roundtrip);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

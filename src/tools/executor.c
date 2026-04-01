@@ -2,6 +2,9 @@
  * executor.c — tool registry, dispatch, and result serialization
  */
 
+#define JSMN_STATIC
+#include "jsmn.h"
+
 #include "executor.h"
 
 #include <assert.h>
@@ -209,6 +212,187 @@ char *tool_result_to_json(Arena *arena, const char *tool_use_id,
     memcpy(buf + pos, sfx, sizeof sfx - 1);
     pos += sizeof sfx - 1;
     buf[pos] = '\0';
+
+    return buf;
+}
+
+/* -------------------------------------------------------------------------
+ * tool_search meta-tool
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Parse the "name" string field from a JSON object like {"name":"<value>"}.
+ * Writes at most (cap-1) bytes plus NUL into out.
+ * Returns 0 on success, -1 if the field is absent or the value is too long.
+ */
+static int get_name_arg(const char *args_json, char *out, size_t cap)
+{
+    jsmn_parser p;
+    jsmntok_t   toks[32];
+
+    jsmn_init(&p);
+    int ntok = jsmn_parse(&p, args_json, strlen(args_json), toks, 32);
+    if (ntok < 1) return -1;
+
+    /* Walk key-value pairs in the top-level object. */
+    for (int i = 1; i + 1 < ntok; i += 2) {
+        const jsmntok_t *key = &toks[i];
+        const jsmntok_t *val = &toks[i + 1];
+        if (key->type != JSMN_STRING) continue;
+        int klen = key->end - key->start;
+        if (klen != 4 || memcmp(args_json + key->start, "name", 4) != 0)
+            continue;
+        int vlen = val->end - val->start;
+        if (vlen < 0 || (size_t)vlen >= cap) return -1;
+        memcpy(out, args_json + val->start, (size_t)vlen);
+        out[vlen] = '\0';
+        return 0;
+    }
+    return -1;
+}
+
+static ToolResult tool_search_handler(Arena *arena, const char *args_json)
+{
+    char name[128];
+    if (get_name_arg(args_json, name, sizeof(name)) != 0) {
+        static const char msg[] = "{\"error\":\"missing or invalid \\\"name\\\" argument\"}";
+        size_t mlen = sizeof(msg) - 1;
+        char  *buf  = arena_alloc(arena, mlen + 1);
+        if (buf) memcpy(buf, msg, mlen + 1);
+        ToolResult r = { .error = 1, .content = buf, .len = mlen };
+        return r;
+    }
+
+    for (int i = 0; i < s_count; i++) {
+        if (strcmp(s_registry[i].name, name) == 0) {
+            const char *schema = s_registry[i].schema_json
+                                 ? s_registry[i].schema_json : "{}";
+            size_t slen = strlen(schema);
+            char  *buf  = arena_alloc(arena, slen + 1);
+            if (buf) memcpy(buf, schema, slen + 1);
+            ToolResult r = { .error = 0, .content = buf, .len = slen };
+            return r;
+        }
+    }
+
+    /* Not found — build error message. */
+    size_t nlen    = strlen(name);
+    size_t esc_len = json_escape(NULL, 0, name, nlen);
+    /* {"error":"tool not found","name":""} = 38 chars overhead + esc + NUL */
+    size_t buflen  = esc_len + 40;
+    char  *msg     = arena_alloc(arena, buflen);
+
+    const char *prefix = "{\"error\":\"tool not found\",\"name\":\"";
+    size_t plen = strlen(prefix);
+    memcpy(msg, prefix, plen);
+    size_t pos = plen;
+    pos += json_escape(msg + pos, buflen - pos, name, nlen);
+    if (pos + 3 <= buflen) {
+        msg[pos]     = '"';
+        msg[pos + 1] = '}';
+        msg[pos + 2] = '\0';
+        pos += 2;
+    }
+
+    ToolResult r = { .error = 1, .content = msg, .len = pos };
+    return r;
+}
+
+static const char s_tool_search_schema[] =
+    "{"
+    "\"name\":\"tool_search\","
+    "\"description\":\"Fetch the full JSON schema for a registered tool by name.\","
+    "\"input_schema\":{"
+        "\"type\":\"object\","
+        "\"properties\":{"
+            "\"name\":{\"type\":\"string\",\"description\":\"Tool name to look up\"}"
+        "},"
+        "\"required\":[\"name\"]"
+    "}"
+    "}";
+
+void tool_search_register(void)
+{
+    tool_register("tool_search", s_tool_search_schema, tool_search_handler);
+}
+
+/* -------------------------------------------------------------------------
+ * tool_names_json / tool_schemas_json
+ * ---------------------------------------------------------------------- */
+
+char *tool_names_json(Arena *arena)
+{
+    assert(arena != NULL);
+
+    /* Compute required buffer size. */
+    /* Format: [{"name":"t1"},{"name":"t2"},...] */
+    /* Each entry: {"name":"<name>"} = 11 + len(name) chars, plus comma. */
+    /* Bracket pair: 2.  Final NUL: 1. */
+    size_t total = 3; /* "[]" + NUL */
+    int    count = 0;
+
+    for (int i = 0; i < s_count; i++) {
+        if (strcmp(s_registry[i].name, "tool_search") == 0) continue;
+        /* {"name":"<name>"} = 11 + strlen(name), plus comma separator */
+        total += 11 + strlen(s_registry[i].name) + 1; /* +1 for comma */
+        count++;
+    }
+
+    char *buf = arena_alloc(arena, total);
+    if (!buf) return NULL;
+
+    char *p = buf;
+    *p++ = '[';
+
+    int written = 0;
+    for (int i = 0; i < s_count; i++) {
+        if (strcmp(s_registry[i].name, "tool_search") == 0) continue;
+        if (written > 0) *p++ = ',';
+        size_t nlen = strlen(s_registry[i].name);
+        memcpy(p, "{\"name\":\"", 9); p += 9;
+        memcpy(p, s_registry[i].name, nlen); p += nlen;
+        memcpy(p, "\"}", 2); p += 2;
+        written++;
+    }
+
+    *p++ = ']';
+    *p   = '\0';
+
+    (void)count;
+    return buf;
+}
+
+char *tool_schemas_json(Arena *arena)
+{
+    assert(arena != NULL);
+
+    /* Compute required buffer size. */
+    /* Format: [<schema1>,<schema2>,...] */
+    size_t total = 3; /* "[]" + NUL */
+
+    for (int i = 0; i < s_count; i++) {
+        const char *schema = s_registry[i].schema_json
+                             ? s_registry[i].schema_json : "{}";
+        total += strlen(schema) + 1; /* +1 for comma */
+    }
+
+    char *buf = arena_alloc(arena, total);
+    if (!buf) return NULL;
+
+    char *p = buf;
+    *p++ = '[';
+
+    for (int i = 0; i < s_count; i++) {
+        if (i > 0) *p++ = ',';
+        const char *schema = s_registry[i].schema_json
+                             ? s_registry[i].schema_json : "{}";
+        size_t slen = strlen(schema);
+        memcpy(p, schema, slen);
+        p += slen;
+    }
+
+    *p++ = ']';
+    *p   = '\0';
 
     return buf;
 }

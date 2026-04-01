@@ -44,6 +44,31 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json);
 void tool_registry_reset(void);
 
 /*
+ * Register the tool_search meta-tool.
+ * Call once at startup (after all other tools are registered) so the model
+ * can request full schemas on demand.  tool_search itself always carries its
+ * full schema and is excluded from the name-stub list returned by
+ * tool_names_json().
+ */
+void tool_search_register(void);
+
+/*
+ * Return a JSON array of name-only stubs for every registered tool except
+ * tool_search itself:
+ *   [{"name":"bash"},{"name":"grep"},...]
+ * Arena-allocated NUL-terminated string.  Returns NULL on allocation failure.
+ */
+char *tool_names_json(Arena *arena);
+
+/*
+ * Return the full tool-schemas JSON array for every registered tool
+ * (including tool_search):
+ *   [<schema1>,<schema2>,...]
+ * Arena-allocated NUL-terminated string.  Returns NULL on allocation failure.
+ */
+char *tool_schemas_json(Arena *arena);
+
+/*
  * Fill `names` with pointers to the names of registered tools (up to max_names).
  * Returns the total number of registered tools (may exceed max_names).
  * Pointers are into static storage — do not free.

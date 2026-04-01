@@ -44,7 +44,8 @@ TEST_LDFLAGS :=
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
              tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
-             tests/test_oom tests/test_retry tests/test_conversation
+             tests/test_oom tests/test_retry tests/test_conversation \
+             tests/test_prompt
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -95,6 +96,11 @@ tests/test_retry: tests/test_retry.c src/api/retry.c
 # CMP-118: conversation manager
 tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
                          src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-121: system prompt builder
+tests/test_prompt: tests/test_prompt.c src/agent/prompt.c \
+                   src/tools/executor.c src/util/arena.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

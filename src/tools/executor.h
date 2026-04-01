@@ -44,6 +44,13 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json);
 void tool_registry_reset(void);
 
 /*
+ * Fill `names` with pointers to the names of registered tools (up to max_names).
+ * Returns the total number of registered tools (may exceed max_names).
+ * Pointers are into static storage — do not free.
+ */
+int tool_list_names(const char **names, int max_names);
+
+/*
  * Serialize a ToolResult into a Claude-compatible tool_result block:
  *   {"type":"tool_result","tool_use_id":"<id>","content":"<esc>"}
  * If result->error is non-zero, "is_error":true is included.

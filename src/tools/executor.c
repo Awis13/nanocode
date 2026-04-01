@@ -46,6 +46,14 @@ void tool_registry_reset(void)
     s_count = 0;
 }
 
+int tool_list_names(const char **names, int max_names)
+{
+    int fill = s_count < max_names ? s_count : max_names;
+    for (int i = 0; i < fill; i++)
+        names[i] = s_registry[i].name;
+    return s_count;
+}
+
 /* -------------------------------------------------------------------------
  * Dispatch
  * ---------------------------------------------------------------------- */

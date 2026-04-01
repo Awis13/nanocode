@@ -423,25 +423,6 @@ static int tok_str_eq(const jsmntok_t *t, int i, const char *json, const char *k
 }
 
 /*
- * Find the token index of key in the object starting at token obj_tok.
- * Returns the value token index, or -1 if not found.
- * `end_tok` is the exclusive upper bound.
- */
-static int find_key_in_obj(const jsmntok_t *t, int obj_tok, int end_tok,
-                           const char *json, const char *key)
-{
-    int size = t[obj_tok].size;
-    int i = obj_tok + 1;
-    for (int k = 0; k < size && i + 1 < end_tok; k++) {
-        if (tok_str_eq(t, i, json, key))
-            return i + 1; /* value token */
-        /* Skip past the value (might be nested — use end position). */
-        i += 2;
-    }
-    return -1;
-}
-
-/*
  * Advance token index past a complete value token (including children).
  * Returns the index of the next token after the value.
  */
@@ -454,6 +435,25 @@ static int skip_value(const jsmntok_t *t, int ntok, int i)
     while (i < ntok && t[i].start < end)
         i++;
     return i;
+}
+
+/*
+ * Find the token index of key in the object starting at token obj_tok.
+ * Returns the value token index, or -1 if not found.
+ * `end_tok` is the exclusive upper bound.
+ */
+static int find_key_in_obj(const jsmntok_t *t, int obj_tok, int end_tok,
+                           const char *json, const char *key)
+{
+    int size = t[obj_tok].size;
+    int i = obj_tok + 1;
+    for (int k = 0; k < size && i + 1 < end_tok; k++) {
+        if (tok_str_eq(t, i, json, key))
+            return i + 1; /* value token */
+        /* Skip key, then skip value (handles nested objects/arrays). */
+        i = skip_value(t, end_tok, i + 1);
+    }
+    return -1;
 }
 
 Conversation *conv_load(Arena *arena, const char *path)

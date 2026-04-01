@@ -11,7 +11,7 @@
 #define CONVERSATION_H
 
 #include "../util/arena.h"
-#include "../api/provider.h"  /* for Message type */
+#include "../api/message.h"
 
 typedef struct {
     char  *role;     /* "user", "assistant", "system", "tool_result" */

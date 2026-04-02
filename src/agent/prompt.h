@@ -18,6 +18,25 @@
 #include "../../include/sandbox.h"
 
 /*
+ * PROMPT_NO_POPEN — set to 1 in any ASan build (GCC or Clang).
+ *
+ * popen() calls fork() which deadlocks under macOS ASan.
+ * GCC defines __SANITIZE_ADDRESS__; Clang uses __has_feature().
+ * Tests check this macro to skip popen-dependent cases.
+ */
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define PROMPT_NO_POPEN 1
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#  define PROMPT_NO_POPEN 1
+#endif
+#ifndef PROMPT_NO_POPEN
+#  define PROMPT_NO_POPEN 0
+#endif
+
+/*
  * Build the system prompt from project context.
  *
  * `arena` — all output is arena-allocated; caller owns no separate memory.

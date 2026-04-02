@@ -230,7 +230,13 @@ TEST(test_prompt_no_config_file)
 
 /* -------------------------------------------------------------------------
  * Git status — run in the actual repo directory (which is a git repo)
+ *
+ * These tests invoke popen() via prompt_build → run_cmd_to_buf.
+ * They are excluded from ASan builds where popen() deadlocks on macOS
+ * (ASan + fork() interaction).  See PROMPT_NO_POPEN in prompt.h.
  * ---------------------------------------------------------------------- */
+
+#if !PROMPT_NO_POPEN
 
 TEST(test_prompt_git_status_in_repo)
 {
@@ -240,8 +246,6 @@ TEST(test_prompt_git_status_in_repo)
      * does not crash and is non-empty; the section header may or may
      * not appear depending on working-tree state.
      */
-    /* Use current directory — the binary is run from the project root,
-     * which is a git repository. */
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
@@ -251,6 +255,42 @@ TEST(test_prompt_git_status_in_repo)
 
     arena_free(a);
 }
+
+/* -------------------------------------------------------------------------
+ * Environment bootstrap — compilers/runtimes, package managers, shell
+ * (also popen-dependent, excluded from ASan builds)
+ * ---------------------------------------------------------------------- */
+
+TEST(test_prompt_env_contains_environment_section)
+{
+    /*
+     * At least one of cc/gcc/clang must be present on any build host.
+     * Check that the "## Environment" header appears.
+     */
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_NOT_NULL(strstr(p, "Environment"));
+
+    arena_free(a);
+}
+
+TEST(test_prompt_env_shell_present)
+{
+    /* $SHELL is always set on POSIX systems. */
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_NOT_NULL(strstr(p, "Shell:"));
+
+    arena_free(a);
+}
+
+#endif /* !PROMPT_NO_POPEN */
 
 TEST(test_prompt_graceful_not_in_git)
 {
@@ -400,7 +440,11 @@ int main(void)
     RUN_TEST(test_prompt_claude_md_takes_priority);
     RUN_TEST(test_prompt_no_config_file);
 
+#if !PROMPT_NO_POPEN
     RUN_TEST(test_prompt_git_status_in_repo);
+    RUN_TEST(test_prompt_env_contains_environment_section);
+    RUN_TEST(test_prompt_env_shell_present);
+#endif
     RUN_TEST(test_prompt_graceful_not_in_git);
 
     RUN_TEST(test_prompt_lists_tools);

@@ -75,6 +75,22 @@ int sandbox_validate(const SandboxConfig *sc);
 int sandbox_activate(const SandboxConfig *sc);
 
 /* -------------------------------------------------------------------------
+ * sandbox_sbpl_build -- build macOS SBPL policy string (for testing / debug)
+ *
+ * Writes a NUL-terminated Scheme-syntax SBPL deny-all policy into
+ * buf[0..bufsz-1] based on sc->allowed_paths and sc->network.
+ *
+ * Only compiled when __APPLE__ is defined; available on all platforms
+ * when SANDBOX_TEST is defined (for unit tests that verify the string).
+ *
+ * Returns the number of characters written (excluding NUL), or -1 if
+ * bufsz is too small (output is still NUL-terminated and truncated).
+ * ---------------------------------------------------------------------- */
+#if defined(__APPLE__) || defined(SANDBOX_TEST)
+int sandbox_sbpl_build(const SandboxConfig *sc, char *buf, size_t bufsz);
+#endif
+
+/* -------------------------------------------------------------------------
  * sandbox_build_prompt_block -- generate <sandbox_policy> system prompt block
  *
  * Writes a NUL-terminated XML-tagged block into buf[0..bufsz-1].

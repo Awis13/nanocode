@@ -48,7 +48,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
              tests/test_config tests/test_mcp tests/test_tool_display \
              tests/test_session tests/test_loop tests/test_memory tests/test_pipe \
-             tests/test_tool_protocol tests/test_subagent
+             tests/test_tool_protocol tests/test_subagent \
+             tests/test_sandbox
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -169,6 +170,11 @@ tests/test_subagent: tests/test_subagent.c \
                      src/util/arena.c \
                      src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-200: OS-level sandbox enforcement — macOS SBPL + Linux Landlock
+tests/test_sandbox: tests/test_sandbox.c src/core/sandbox.c \
+                    src/core/config.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -DSANDBOX_TEST -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test
 

@@ -24,7 +24,7 @@
  * Internal limits
  * ---------------------------------------------------------------------- */
 
-#define CFG_MAX_ENTRIES  64
+#define CFG_MAX_ENTRIES  80
 #define CFG_KEY_MAX      64
 #define CFG_VAL_MAX      512
 #define CFG_LINE_MAX     1024
@@ -43,6 +43,10 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     /* [sandbox] */
     { "sandbox.enabled",               "true"                      },
     { "sandbox.profile",               "strict"                    },
+    { "sandbox.allowed_paths",         ""                          },
+    { "sandbox.allowed_commands",      ""                          },
+    { "sandbox.network",               "false"                     },
+    { "sandbox.max_file_size",         "10485760"                  },
     /* [ui] */
     { "ui.theme",                      "dark"                      },
     { "ui.word_wrap",                  "true"                      },
@@ -100,8 +104,12 @@ static const char s_default_toml[] =
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "[sandbox]\n"
-    "enabled      = true                    # Enable tool sandboxing\n"
-    "profile      = \"strict\"               # Sandbox profile: strict | permissive\n"
+    "enabled          = true                # Enable tool sandboxing\n"
+    "profile          = \"strict\"           # Sandbox profile: strict | permissive | custom\n"
+    "allowed_paths    = \"\"                 # Colon-separated absolute paths (required for custom)\n"
+    "allowed_commands = \"\"                 # Colon-separated command basenames (required for custom)\n"
+    "network          = false               # Allow outbound network from tools\n"
+    "max_file_size    = 10485760            # Max bytes per file write (10 MB default)\n"
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "[ui]\n"

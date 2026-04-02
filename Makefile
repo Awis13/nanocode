@@ -44,7 +44,8 @@ TEST_LDFLAGS :=
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
              tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
-             tests/test_oom tests/test_retry tests/test_conversation
+             tests/test_oom tests/test_retry tests/test_conversation \
+             tests/test_audit
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -55,7 +56,9 @@ tests/test_buf: tests/test_buf.c src/util/buf.c
 tests/test_json: tests/test_json.c src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -Ivendor/jsmn -o $@ $^
 
-tests/test_executor: tests/test_executor.c src/tools/executor.c src/util/arena.c
+# CMP-210: audit.c is linked because executor.c calls audit_tool_call
+tests/test_executor: tests/test_executor.c src/tools/executor.c src/util/arena.c \
+                    src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
@@ -63,7 +66,7 @@ tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_bash: tests/test_bash.c src/tools/bash.c src/tools/executor.c \
-                 src/util/arena.c src/util/json.c
+                 src/util/arena.c src/util/json.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_context: tests/test_context.c src/agent/context.c src/util/arena.c
@@ -95,6 +98,10 @@ tests/test_retry: tests/test_retry.c src/api/retry.c
 # CMP-118: conversation manager
 tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
                          src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-210: structured audit log — JSONL tool call + sandbox denial logging
+tests/test_audit: tests/test_audit.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

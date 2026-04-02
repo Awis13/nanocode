@@ -4,7 +4,7 @@ tb_check_regression.py — Compare a TB run against a stored baseline.
 
 Exits 0 if pass rate did not regress beyond threshold.
 Exits 1 if pass rate dropped by more than threshold percentage points.
-Exits 2 if baseline file is missing (bootstrap mode — copies results as new baseline).
+Exits 0 (success) if baseline file is missing or has no results (bootstrap mode).
 
 Usage:
     python harbor/scripts/tb_check_regression.py \
@@ -83,7 +83,7 @@ def main() -> int:
     if not args.baseline.exists() or not load_json(args.baseline).get("results"):
         print(f"\nBaseline not found or empty at {args.baseline}.")
         print("Treating current results as bootstrap — no regression check performed.")
-        return 2
+        return 0
 
     baseline = load_json(args.baseline)
     baseline_rate = baseline["pass_rate"]

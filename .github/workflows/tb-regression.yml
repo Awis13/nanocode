@@ -26,11 +26,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install Terminal-Bench
-        run: pip install harbor-bench terminal-bench-core==0.1.1
+        run: pip install harbor-bench==0.1.0 terminal-bench-core==0.1.1
 
       - name: Run Terminal-Bench subset
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # NANOCODE_REF: git ref to clone when building nanocode inside the TB container.
+          # Defaults to the release tag, so each tagged release tests its own source.
           NANOCODE_REF: ${{ github.ref_name }}
         run: |
           python harbor/scripts/tb_run_subset.py \

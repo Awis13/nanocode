@@ -21,6 +21,7 @@
  *                   max_context_tokens
  *   [keys]          submit, cancel, scroll_up, scroll_down
  *   [performance]   idle_timeout_ms, max_output_lines, history_limit_mb
+ *   pet             active pet: cat | crab | dog | off (empty = auto on first run)
  */
 
 #ifndef CONFIG_H

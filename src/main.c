@@ -87,7 +87,9 @@ int main(int argc, char **argv)
     int         cli_daemon          = 0;
     int         cli_dry_run         = 0;
     int         cli_readonly        = 0;
+    int         cli_no_pet          = 0;
     const char *cli_sandbox_profile = NULL;
+    const char *cli_pet_name        = NULL;
     char        cli_timeout_arg[64] = "";
 
     /* Single-pass flag parse so all flags are known before env-based autodetect. */
@@ -119,6 +121,16 @@ int main(int argc, char **argv)
             }
             strncpy(cli_timeout_arg, argv[++i], sizeof(cli_timeout_arg) - 1);
             cli_timeout_arg[sizeof(cli_timeout_arg) - 1] = '\0';
+        } else if (strcmp(argv[i], "--no-pet") == 0) {
+            cli_no_pet = 1;
+        } else if (strcmp(argv[i], "--pet") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr,
+                        "nanocode: --pet requires a name "
+                        "(cat | crab | dog | off)\n");
+                return 1;
+            }
+            cli_pet_name = argv[++i];
         }
     }
 
@@ -156,6 +168,49 @@ int main(int argc, char **argv)
         config_set(cfg, "sandbox.enabled", "true");
     if (cli_sandbox_profile)
         config_set(cfg, "sandbox.profile", cli_sandbox_profile);
+
+    /* Resolve pet selection.
+     * Priority (high → low): --no-pet / --pet flag, implicit disable, config.
+     * --json mode is already handled above (early exit), so no check needed. */
+    {
+        /* Apply CLI pet flags (highest priority). */
+        if (cli_no_pet)
+            config_set(cfg, "pet", "off");
+        else if (cli_pet_name)
+            config_set(cfg, "pet", cli_pet_name);
+
+        /* Implicit disable: --dry-run mode turns off pet output. */
+        if (cli_dry_run)
+            config_set(cfg, "pet", "off");
+
+        const char *pet_val = config_get_str(cfg, "pet");
+
+        /* First run: empty pet → default to cat (TODO: replace with
+         * pet_kind_random() once subtask A lands). */
+        if (!pet_val || pet_val[0] == '\0') {
+            config_set(cfg, "pet", "cat");
+            /* Persist the chosen pet so subsequent runs are consistent. */
+            const char *home = getenv("HOME");
+            if (home && home[0]) {
+                char save_path[512];
+                snprintf(save_path, sizeof(save_path),
+                         "%s/.nanocode/config.toml", home);
+                config_save(cfg, save_path);
+            }
+            pet_val = config_get_str(cfg, "pet");
+        }
+
+        /* Validate pet name; warn and fall back to "cat" for unknown values. */
+        if (pet_val && strcmp(pet_val, "cat")  != 0
+                    && strcmp(pet_val, "crab") != 0
+                    && strcmp(pet_val, "dog")  != 0
+                    && strcmp(pet_val, "off")  != 0) {
+            fprintf(stderr,
+                    "nanocode: warning: unknown pet '%s', using 'cat'\n",
+                    pet_val);
+            config_set(cfg, "pet", "cat");
+        }
+    }
 
     /* Resolve execution mode: config key first, then CLI flags (higher priority). */
     {

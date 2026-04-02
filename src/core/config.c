@@ -79,6 +79,8 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "keys.cancel",                   "ctrl-c"                    },
     { "keys.scroll_up",                "ctrl-u"                    },
     { "keys.scroll_down",              "ctrl-d"                    },
+    /* [pet] */
+    { "pet",                           ""                          },
     /* [session] */
     { "session.max_files_created",     "50"                        },
     { "session.timeout",               ""                          },
@@ -175,7 +177,11 @@ static const char s_default_toml_b[] =
     "# ---------------------------------------------------------------------------\n"
     "[session]\n"
     "max_files_created = 50              # Max new files an agent may create per session\n"
-    "timeout           = \"\"             # Session auto-terminate duration: 30m, 1h, 90s, or empty for none\n";
+    "timeout           = \"\"             # Session auto-terminate duration: 30m, 1h, 90s, or empty for none\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "# pet = \"cat\"                       # Active pet: cat | crab | dog | off\n"
+    "#                                   # (empty = auto-pick on first run)\n";
 
 /* -------------------------------------------------------------------------
  * Config struct (arena-allocated; entries are embedded)

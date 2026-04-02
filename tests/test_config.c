@@ -838,6 +838,132 @@ TEST(test_sandbox_new_keys_defaults_when_absent)
 }
 
 /* =========================================================================
+ * CMP-244: pet config — parsing, defaults, set/override, validation
+ * ====================================================================== */
+
+TEST(test_pet_config_default)
+{
+    /* pet key defaults to empty string (auto-pick on first run). */
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "[provider]\nmodel = \"test\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "");
+    arena_free(a);
+}
+
+TEST(test_pet_config_parse_cat)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"cat\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "cat");
+    arena_free(a);
+}
+
+TEST(test_pet_config_parse_crab)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"crab\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "crab");
+    arena_free(a);
+}
+
+TEST(test_pet_config_parse_dog)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"dog\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "dog");
+    arena_free(a);
+}
+
+TEST(test_pet_config_parse_off)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"off\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "off");
+    arena_free(a);
+}
+
+TEST(test_pet_config_cli_override)
+{
+    /* Simulate: config has "dog", CLI --pet crab overrides it. */
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"dog\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "dog");
+
+    /* Simulate --pet crab: CLI override via config_set. */
+    config_set(cfg, "pet", "crab");
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "crab");
+
+    arena_free(a);
+}
+
+TEST(test_pet_config_no_pet_override)
+{
+    /* Simulate --no-pet: sets pet = "off", overriding config value. */
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"cat\"\n");
+    ASSERT_NOT_NULL(cfg);
+
+    config_set(cfg, "pet", "off");
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "off");
+
+    arena_free(a);
+}
+
+TEST(test_pet_config_unknown_falls_back_to_cat)
+{
+    /* Unknown value parsed from config; caller validates and falls back. */
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "pet = \"fish\"\n");
+    ASSERT_NOT_NULL(cfg);
+
+    const char *val = config_get_str(cfg, "pet");
+    /* Simulate main.c validation logic. */
+    int valid = (strcmp(val, "cat")  == 0 ||
+                 strcmp(val, "crab") == 0 ||
+                 strcmp(val, "dog")  == 0 ||
+                 strcmp(val, "off")  == 0);
+    ASSERT_EQ(valid, 0);  /* "fish" is not a valid pet name */
+
+    /* After fallback: */
+    config_set(cfg, "pet", "cat");
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "cat");
+
+    arena_free(a);
+}
+
+TEST(test_pet_config_first_run_empty_then_set)
+{
+    /* First run: empty pet; simulate main.c defaulting to "cat". */
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "[provider]\nmodel = \"test\"\n");
+    ASSERT_NOT_NULL(cfg);
+
+    const char *val = config_get_str(cfg, "pet");
+    ASSERT_STR_EQ(val, "");  /* empty on first run */
+
+    /* Simulate main.c stubbed default. */
+    config_set(cfg, "pet", "cat");
+    ASSERT_STR_EQ(config_get_str(cfg, "pet"), "cat");
+
+    arena_free(a);
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -912,6 +1038,17 @@ int main(void)
     /* CMP-199: sandbox new config keys */
     RUN_TEST(test_sandbox_new_keys_parse);
     RUN_TEST(test_sandbox_new_keys_defaults_when_absent);
+
+    /* CMP-244: pet config */
+    RUN_TEST(test_pet_config_default);
+    RUN_TEST(test_pet_config_parse_cat);
+    RUN_TEST(test_pet_config_parse_crab);
+    RUN_TEST(test_pet_config_parse_dog);
+    RUN_TEST(test_pet_config_parse_off);
+    RUN_TEST(test_pet_config_cli_override);
+    RUN_TEST(test_pet_config_no_pet_override);
+    RUN_TEST(test_pet_config_unknown_falls_back_to_cat);
+    RUN_TEST(test_pet_config_first_run_empty_then_set);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

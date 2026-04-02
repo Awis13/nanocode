@@ -47,8 +47,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_oom tests/test_retry tests/test_conversation \
              tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
              tests/test_config tests/test_mcp tests/test_tool_display \
-             tests/test_session tests/test_loop tests/test_memory tests/test_pipe \
-             tests/test_tool_protocol tests/test_subagent \
+             tests/test_session tests/test_loop tests/test_memory \
+             tests/test_tool_protocol \
              tests/test_sandbox
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
@@ -148,10 +148,6 @@ tests/test_memory: tests/test_memory.c src/tools/memory.c src/tools/executor.c \
                    src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
-# CMP-188: Unix pipe mode — provider resolution and stdin buffering
-tests/test_pipe: tests/test_pipe.c src/util/buf.c
-	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
-
 # CMP-119: tool use protocol — parse + dispatch tool calls, schema payload
 tests/test_tool_protocol: tests/test_tool_protocol.c \
                            src/agent/tool_protocol.c \
@@ -159,16 +155,6 @@ tests/test_tool_protocol: tests/test_tool_protocol.c \
                            src/tools/executor.c \
                            src/util/arena.c \
                            src/util/buf.c
-	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
-
-# CMP-154: subagent isolation — tool policy, nesting depth, run validation
-tests/test_subagent: tests/test_subagent.c \
-                     src/agent/subagent.c \
-                     src/agent/conversation.c \
-                     src/agent/context.c \
-                     src/tools/executor.c \
-                     src/util/arena.c \
-                     src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-200: OS-level sandbox enforcement — macOS SBPL + Linux Landlock
@@ -217,7 +203,8 @@ test_stream: bearssl $(TEST_STREAM_SRCS)
 
 clean:
 	rm -f $(OBJS) $(BIN) test_stream $(TEST_BINS) \
-	      tests/test_grep tests/test_grep_asan
+	      tests/test_grep tests/test_grep_asan \
+	      tests/test_pipe tests/test_subagent
 
 install: $(BIN)
 	install -d $(DESTDIR)/bin

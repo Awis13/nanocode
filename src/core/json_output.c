@@ -5,6 +5,9 @@
  * directly since this is a one-shot serializer at process exit.
  */
 
+#define JSMN_STATIC
+#include "../../vendor/jsmn/jsmn.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +63,17 @@ static void write_json_string(const char *s)
     putchar('"');
 }
 
+/* Return 1 if `s` is a well-formed JSON value, 0 otherwise. Uses jsmn. */
+static int is_valid_json(const char *s)
+{
+    if (!s || !*s) return 0;
+    jsmn_parser p;
+    jsmntok_t   toks[256];
+    jsmn_init(&p);
+    int n = jsmn_parse(&p, s, strlen(s), toks, 256);
+    return n > 0;
+}
+
 /* Write a JSON string array. Handles NULL array (emits []). */
 static void write_string_array(char **arr, int n)
 {
@@ -108,8 +122,10 @@ void json_output_print(const JsonOutput *out)
         fputs("\"tool\":", stdout);
         write_json_string(out->tool_calls[i].tool);
         fputs(",\"args\":", stdout);
-        /* args_json is already a JSON object string — emit verbatim if set */
-        if (out->tool_calls[i].args_json)
+        /* Emit args_json verbatim only if it is well-formed JSON; fall back
+         * to an empty object to keep the output valid. */
+        if (out->tool_calls[i].args_json &&
+                is_valid_json(out->tool_calls[i].args_json))
             fputs(out->tool_calls[i].args_json, stdout);
         else
             fputs("{}", stdout);

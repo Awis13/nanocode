@@ -154,17 +154,6 @@ int main(int argc, char **argv)
         if (env && strcmp(env, "1") == 0) cli_json = 1;
     }
 
-    /* Short-circuit: JSON mode emits the envelope and exits without TUI. */
-    if (cli_json) {
-        JsonOutput jout;
-        json_output_init(&jout);
-        jout.status      = "done";
-        jout.result      = "nanocode json mode active (stub)";
-        jout.duration_ms = 0;
-        json_output_print(&jout);
-        return NC_EXIT_OK;
-    }
-
     /* -----------------------------------------------------------------------
      * Phase 2: Load configuration.
      * -------------------------------------------------------------------- */
@@ -183,8 +172,7 @@ int main(int argc, char **argv)
         config_set(cfg, "sandbox.profile", cli_sandbox_profile);
 
     /* Resolve pet selection.
-     * Priority (high → low): --no-pet / --pet flag, implicit disable, config.
-     * --json mode is already handled above (early exit), so no check needed. */
+     * Priority (high → low): --no-pet / --pet flag, implicit disable, config. */
     {
         /* Apply CLI pet flags (highest priority). */
         if (cli_no_pet)
@@ -192,8 +180,8 @@ int main(int argc, char **argv)
         else if (cli_pet_name)
             config_set(cfg, "pet", cli_pet_name);
 
-        /* Implicit disable: --dry-run mode turns off pet output. */
-        if (cli_dry_run)
+        /* Implicit disable: --dry-run and --json modes turn off pet output. */
+        if (cli_dry_run || cli_json)
             config_set(cfg, "pet", "off");
 
         const char *pet_val = config_get_str(cfg, "pet");
@@ -437,8 +425,15 @@ int main(int argc, char **argv)
         printf("nanocode daemon listening on %s\n", sock_path);
     }
 
-    printf("nanocode v0.1-dev\n");
+    if (!cli_json)
+        printf("nanocode v0.1-dev\n");
+
+    struct timespec ts_start, ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+
     loop_run(g_loop);
+
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
 
     if (cli_daemon) {
         daemon_stop(g_daemon);
@@ -450,8 +445,18 @@ int main(int argc, char **argv)
         statusbar_free(g_statusbar);
     }
 
+    if (cli_json) {
+        long ms = (long)(ts_end.tv_sec  - ts_start.tv_sec)  * 1000
+                + (long)(ts_end.tv_nsec - ts_start.tv_nsec) / 1000000;
+        JsonOutput jout;
+        json_output_init(&jout);
+        jout.status      = "done";
+        jout.duration_ms = ms;
+        json_output_print(&jout);
+    }
+
     loop_free(g_loop);
     g_loop = NULL;
     arena_free(arena);
-    return 0;
+    return NC_EXIT_OK;
 }

@@ -10,6 +10,7 @@
 
 #include "../util/arena.h"
 #include "../../include/status_file.h"
+#include "../../include/audit.h"
 #include <stddef.h>
 
 /* Hard cap on number of registered tools. */
@@ -87,6 +88,20 @@ ToolResult tool_invoke_noside(Arena *arena, const char *name,
  * All result memory is arena-allocated.
  */
 ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json);
+
+/*
+ * executor_invoke — audit-aware wrapper around tool_invoke.
+ * Measures wall-clock duration and emits an audit_tool_call() entry when
+ * an audit log has been configured via executor_set_audit().
+ */
+ToolResult executor_invoke(Arena *arena, const char *name, const char *args_json);
+
+/*
+ * Configure the audit log used by executor_invoke.
+ * Passing NULL for log disables audit recording.
+ */
+void executor_set_audit(AuditLog *log, const char *session_id,
+                        const char *sandbox_profile, const char *cwd);
 
 /*
  * Reset the registry — useful in tests to start from a clean state.

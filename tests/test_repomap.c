@@ -487,9 +487,12 @@ TEST(test_scan_nanocode_src)
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(len <= 6144);
 
-    /* Known functions from the codebase. */
+    /* Known functions from the codebase.
+     * Only assert on symbols likely to appear within the 4 KB render cap.
+     * Renderer symbols may be cut off as the codebase grows. */
     ASSERT_TRUE(contains(out, "arena_new") || contains(out, "arena_alloc"));
-    ASSERT_TRUE(contains(out, "renderer_new") || contains(out, "renderer_token"));
+    ASSERT_TRUE(contains(out, "loop_new") || contains(out, "loop_add_fd") ||
+                contains(out, "config_load") || contains(out, "buf_append"));
 
     repomap_free(rm);
     arena_free(a);

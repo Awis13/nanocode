@@ -34,6 +34,11 @@ static int buf_grow(Buf *b, size_t needed)
     return 0;
 }
 
+int buf_reserve(Buf *b, size_t capacity)
+{
+    return buf_grow(b, capacity);
+}
+
 int buf_append(Buf *b, const char *data, size_t len)
 {
     if (buf_grow(b, b->len + len) != 0)

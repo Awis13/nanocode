@@ -746,6 +746,11 @@ static void conn_do_recv(Conn *c)
                 c->retry_after_s  = retry_after;
                 c->state          = CS_RECEIVING_BODY;
 
+                /* Pre-size resp_buf for the body when Content-Length is known.
+                 * Avoids realloc chains for large non-chunked responses. */
+                if (clen > 0)
+                    buf_reserve(&c->resp_buf, (size_t)clen);
+
                 size_t body_offset = (size_t)(body - c->resp_buf.data);
                 size_t body_bytes  = c->resp_buf.len - body_offset;
                 if (body_bytes > 0)

@@ -49,7 +49,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_config tests/test_mcp tests/test_tool_display \
              tests/test_session tests/test_loop tests/test_memory \
              tests/test_tool_protocol \
-             tests/test_sandbox
+             tests/test_sandbox \
+             tests/test_editor
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -162,6 +163,10 @@ tests/test_tool_protocol: tests/test_tool_protocol.c \
 tests/test_sandbox: tests/test_sandbox.c src/core/sandbox.c \
                     src/core/config.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -DSANDBOX_TEST -o $@ $^
+
+# CMP-215: editor integration — $VISUAL/$EDITOR fallback, sandbox path check
+tests/test_editor: tests/test_editor.c src/tools/editor.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test
 

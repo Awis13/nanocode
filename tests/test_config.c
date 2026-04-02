@@ -840,6 +840,26 @@ TEST(test_sandbox_new_keys_defaults_when_absent)
 }
 
 /* =========================================================================
+ * CMP-228: provider.type and provider.port TOML round-trip
+ * ====================================================================== */
+
+TEST(test_provider_type_ollama_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+
+    Config *cfg = load_str(a,
+        "[provider]\n"
+        "type = \"ollama\"\n"
+        "port = 11434\n");
+    ASSERT_NOT_NULL(cfg);
+
+    ASSERT_STR_EQ(config_get_str(cfg, "provider.type"), "ollama");
+    ASSERT_EQ    (config_get_int(cfg, "provider.port"), 11434);
+    arena_free(a);
+}
+
+/* =========================================================================
  * CMP-244: pet config — parsing, defaults, set/override, validation
  * ====================================================================== */
 
@@ -1041,6 +1061,9 @@ int main(void)
     RUN_TEST(test_sandbox_new_keys_parse);
     RUN_TEST(test_sandbox_new_keys_defaults_when_absent);
 
+    /* CMP-228: provider.type and provider.port TOML round-trip */
+    /* CMP-228: provider.type and provider.port TOML round-trip */
+    RUN_TEST(test_provider_type_ollama_parse);
     /* CMP-244: pet config */
     RUN_TEST(test_pet_config_default);
     RUN_TEST(test_pet_config_parse_cat);

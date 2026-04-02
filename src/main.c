@@ -309,7 +309,8 @@ int main(int argc, char **argv)
                          strncmp(base_url, "127.", 4) == 0 ||
                          strcmp(base_url, "::1") == 0))
             use_tls = 0;
-        if (ptype == PROVIDER_CLAUDE && use_tls == 0 && port == 443)
+        /* Cloud Claude endpoints always use TLS. */
+        if (ptype == PROVIDER_CLAUDE && use_tls == 0 && port_cfg == 443)
             use_tls = 1;
 
         provider_cfg.type            = ptype;

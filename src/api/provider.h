@@ -23,11 +23,12 @@ typedef enum {
 
 typedef struct {
     ProviderType  type;
-    const char   *base_url;  /* e.g. "api.anthropic.com" or "localhost" */
-    int           port;      /* 443 for cloud, 11434 for Ollama */
-    int           use_tls;   /* 1 for cloud endpoints, 0 for localhost */
-    const char   *api_key;   /* may be NULL for local models */
-    const char   *model;     /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
+    const char   *base_url;      /* e.g. "api.anthropic.com" or "localhost" */
+    int           port;          /* 443 for cloud, 11434 for Ollama */
+    int           use_tls;       /* 1 for cloud endpoints, 0 for localhost */
+    const char   *api_key;       /* may be NULL for local models */
+    const char   *model;         /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
+    int           thinking_budget; /* >0 enables extended thinking (Claude only) */
 } ProviderConfig;
 
 /*
@@ -35,6 +36,15 @@ typedef struct {
  * `token` is NOT NUL-terminated; `len` bytes are valid.
  */
 typedef void (*provider_token_cb)(const char *token, size_t len, void *ctx);
+
+/*
+ * Called when a complete tool_use block has been streamed.
+ * `id`    — tool_use_id (NUL-terminated)
+ * `name`  — tool name  (NUL-terminated)
+ * `input` — accumulated JSON input string (NUL-terminated, arena-allocated)
+ */
+typedef void (*provider_tool_cb)(const char *id, const char *name,
+                                 const char *input, void *ctx);
 
 /* Called once when the stream is complete. `error` is 0 on success. */
 typedef void (*provider_done_cb)(int error, void *ctx);
@@ -60,6 +70,7 @@ void      provider_free(Provider *p);
 int provider_stream(Provider *p,
                     const Message *msgs, int nmsg,
                     provider_token_cb on_token,
+                    provider_tool_cb  on_tool,
                     provider_done_cb  on_done,
                     void *ctx);
 

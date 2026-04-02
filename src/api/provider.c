@@ -32,14 +32,28 @@
  * Stream context
  * ---------------------------------------------------------------------- */
 
+/* Content block type for Claude streaming — tracks which block is active. */
+typedef enum {
+    BLOCK_NONE = 0,
+    BLOCK_TEXT,
+    BLOCK_TOOL_USE,
+    BLOCK_THINKING,
+} BlockType;
+
 typedef struct {
     ProviderType      type;
     provider_token_cb on_token;
+    provider_tool_cb  on_tool;
     provider_done_cb  on_done;
     void             *ctx;
-    SseParser        *sse;   /* NULL for PROVIDER_OLLAMA */
-    Buf               line_buf; /* for PROVIDER_OLLAMA NDJSON line assembly */
+    SseParser        *sse;        /* NULL for PROVIDER_OLLAMA */
+    Buf               line_buf;   /* for PROVIDER_OLLAMA NDJSON line assembly */
     int               done;
+    /* Claude tool_use block tracking */
+    BlockType         cur_block;
+    char              cur_tool_id[128];
+    char              cur_tool_name[128];
+    Buf               cur_tool_input; /* accumulates input_json_delta */
 } StreamCtx;
 
 /* -------------------------------------------------------------------------
@@ -59,23 +73,75 @@ static int on_sse_event(const char *data, size_t len, void *ctx)
     if (sc->type == PROVIDER_CLAUDE) {
         /*
          * Claude Messages API streaming events:
-         *  - {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
-         *  - {"type":"message_stop"}  (end of stream)
+         *   content_block_start  — starts text, tool_use, or thinking block
+         *   content_block_delta  — text_delta, input_json_delta, thinking_delta
+         *   content_block_stop   — fires on_tool callback for tool_use blocks
+         *   message_stop         — marks stream complete
          */
         char type_val[64];
         if (json_get_str(&jctx, data, "type",
-                         type_val, sizeof(type_val)) == 0) {
-            if (strcmp(type_val, "message_stop") == 0) {
-                sc->done = 1;
+                         type_val, sizeof(type_val)) != 0)
+            return 0;
+
+        if (strcmp(type_val, "message_stop") == 0) {
+            sc->done = 1;
+            return 0;
+        }
+
+        if (strcmp(type_val, "content_block_start") == 0) {
+            char block_type[32];
+            if (json_get_nested_str(&jctx, data, "content_block", "type",
+                                    block_type, sizeof(block_type)) != 0)
                 return 0;
+            if (strcmp(block_type, "text") == 0) {
+                sc->cur_block = BLOCK_TEXT;
+            } else if (strcmp(block_type, "tool_use") == 0) {
+                sc->cur_block = BLOCK_TOOL_USE;
+                json_get_nested_str(&jctx, data, "content_block", "id",
+                                    sc->cur_tool_id, sizeof(sc->cur_tool_id));
+                json_get_nested_str(&jctx, data, "content_block", "name",
+                                    sc->cur_tool_name, sizeof(sc->cur_tool_name));
+                buf_reset(&sc->cur_tool_input);
+            } else if (strcmp(block_type, "thinking") == 0) {
+                sc->cur_block = BLOCK_THINKING;
             }
-            if (strcmp(type_val, "content_block_delta") == 0) {
-                if (json_get_nested_str(&jctx, data,
-                                        "delta", "text",
+            return 0;
+        }
+
+        if (strcmp(type_val, "content_block_delta") == 0) {
+            char delta_type[32];
+            if (json_get_nested_str(&jctx, data, "delta", "type",
+                                    delta_type, sizeof(delta_type)) != 0)
+                return 0;
+            if (strcmp(delta_type, "text_delta") == 0) {
+                if (sc->on_token &&
+                    json_get_nested_str(&jctx, data, "delta", "text",
                                         text, sizeof(text)) == 0) {
                     sc->on_token(text, strlen(text), sc->ctx);
                 }
+            } else if (strcmp(delta_type, "input_json_delta") == 0) {
+                if (sc->cur_block == BLOCK_TOOL_USE &&
+                    json_get_nested_str(&jctx, data, "delta", "partial_json",
+                                        text, sizeof(text)) == 0) {
+                    buf_append_str(&sc->cur_tool_input, text);
+                }
             }
+            /* thinking_delta — intentionally ignored */
+            return 0;
+        }
+
+        if (strcmp(type_val, "content_block_stop") == 0) {
+            if (sc->cur_block == BLOCK_TOOL_USE && sc->on_tool) {
+                /* NUL-terminate the accumulated input */
+                buf_append(&sc->cur_tool_input, "", 1);
+                sc->on_tool(sc->cur_tool_id, sc->cur_tool_name,
+                            sc->cur_tool_input.data
+                                ? sc->cur_tool_input.data : "",
+                            sc->ctx);
+                buf_reset(&sc->cur_tool_input);
+            }
+            sc->cur_block = BLOCK_NONE;
+            return 0;
         }
     } else {
         /*
@@ -178,6 +244,7 @@ static void on_http_done(int status, void *ctx)
     if (sc->sse)
         sse_parser_free(sc->sse);
     buf_destroy(&sc->line_buf);
+    buf_destroy(&sc->cur_tool_input);
     free(sc);
 }
 
@@ -202,18 +269,62 @@ static void json_escape(Buf *b, const char *s)
 }
 
 static int build_claude_body(Buf *b, const char *model,
-                              const Message *msgs, int nmsg)
+                              const Message *msgs, int nmsg,
+                              int thinking_budget)
 {
     buf_append_str(b, "{\"model\":\"");
     json_escape(b, model);
-    buf_append_str(b, "\",\"max_tokens\":4096,\"stream\":true,\"messages\":[");
+
+    /* Extended thinking: budget_tokens controls allocation; max_tokens must
+     * be at least budget + 1000 to leave room for the visible response. */
+    int max_tokens = 4096;
+    if (thinking_budget > 0) {
+        max_tokens = thinking_budget + 4096;
+        buf_append_str(b, "\",\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":");
+        char num[32];
+        snprintf(num, sizeof(num), "%d", thinking_budget);
+        buf_append_str(b, num);
+        buf_append_str(b, "}");
+    } else {
+        buf_append_str(b, "\"");
+    }
+
+    char max_tokens_str[32];
+    snprintf(max_tokens_str, sizeof(max_tokens_str), "%d", max_tokens);
+    buf_append_str(b, ",\"max_tokens\":");
+    buf_append_str(b, max_tokens_str);
+    buf_append_str(b, ",\"stream\":true");
+
+    /* Scan for a system role message and emit it as the top-level field. */
     for (int i = 0; i < nmsg; i++) {
-        if (i > 0) buf_append_str(b, ",");
+        if (msgs[i].role && strcmp(msgs[i].role, "system") == 0) {
+            buf_append_str(b, ",\"system\":\"");
+            json_escape(b, msgs[i].content ? msgs[i].content : "");
+            buf_append_str(b, "\"");
+            break; /* Only the first system message is used. */
+        }
+    }
+
+    buf_append_str(b, ",\"messages\":[");
+    int written = 0;
+    for (int i = 0; i < nmsg; i++) {
+        if (msgs[i].role && strcmp(msgs[i].role, "system") == 0)
+            continue; /* system messages are emitted as top-level field */
+        if (written > 0) buf_append_str(b, ",");
         buf_append_str(b, "{\"role\":\"");
-        json_escape(b, msgs[i].role);
-        buf_append_str(b, "\",\"content\":\"");
-        json_escape(b, msgs[i].content);
-        buf_append_str(b, "\"}");
+        json_escape(b, msgs[i].role ? msgs[i].role : "");
+        buf_append_str(b, "\",\"content\":");
+        /* Content starting with '[' is already a JSON array — emit verbatim. */
+        const char *c = msgs[i].content ? msgs[i].content : "";
+        if (c[0] == '[') {
+            buf_append_str(b, c);
+        } else {
+            buf_append_str(b, "\"");
+            json_escape(b, c);
+            buf_append_str(b, "\"");
+        }
+        buf_append_str(b, "}");
+        written++;
     }
     return buf_append_str(b, "]}");
 }
@@ -291,6 +402,7 @@ void provider_free(Provider *p)
 int provider_stream(Provider *p,
                     const Message *msgs, int nmsg,
                     provider_token_cb on_token,
+                    provider_tool_cb  on_tool,
                     provider_done_cb  on_done,
                     void *ctx)
 {
@@ -298,7 +410,8 @@ int provider_stream(Provider *p,
     buf_reset(&p->body_buf);
     int r;
     if (p->cfg.type == PROVIDER_CLAUDE)
-        r = build_claude_body(&p->body_buf, p->cfg.model, msgs, nmsg);
+        r = build_claude_body(&p->body_buf, p->cfg.model, msgs, nmsg,
+                              p->cfg.thinking_budget);
     else if (p->cfg.type == PROVIDER_OLLAMA)
         r = build_ollama_body(&p->body_buf, p->cfg.model, msgs, nmsg);
     else
@@ -310,18 +423,22 @@ int provider_stream(Provider *p,
     StreamCtx *sc = calloc(1, sizeof(StreamCtx));
     if (!sc)
         return -1;
-    sc->type     = p->cfg.type;
-    sc->on_token = on_token;
-    sc->on_done  = on_done;
-    sc->ctx      = ctx;
-    sc->done     = 0;
+    sc->type      = p->cfg.type;
+    sc->on_token  = on_token;
+    sc->on_tool   = on_tool;
+    sc->on_done   = on_done;
+    sc->ctx       = ctx;
+    sc->done      = 0;
+    sc->cur_block = BLOCK_NONE;
     buf_init(&sc->line_buf);
+    buf_init(&sc->cur_tool_input);
 
     if (p->cfg.type == PROVIDER_OLLAMA) {
         sc->sse = NULL;
     } else {
         sc->sse = sse_parser_new(on_sse_event, sc);
         if (!sc->sse) {
+            buf_destroy(&sc->cur_tool_input);
             free(sc);
             return -1;
         }

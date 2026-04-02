@@ -82,7 +82,7 @@ int main(int argc, char **argv)
         { "user", "Say hello in exactly one short sentence. /no_think" },
     };
 
-    int r = provider_stream(provider, msgs, 1, on_token, on_done, loop);
+    int r = provider_stream(provider, msgs, 1, on_token, NULL, on_done, loop);
     if (r < 0) {
         fprintf(stderr, "test_stream: failed to start stream\n");
         provider_free(provider);

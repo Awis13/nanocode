@@ -32,7 +32,8 @@ BIN      := nanocode
 INCLUDES := -Iinclude            \
             -Ivendor/jsmn        \
             -Ivendor/bearssl/inc \
-            -Isrc
+            -Isrc                \
+            -Isrc/core
 
 # ---------------------------------------------------------------------------
 # Unit tests — each test file is a separate binary
@@ -50,7 +51,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_session tests/test_loop tests/test_memory \
              tests/test_tool_protocol \
              tests/test_sandbox \
-             tests/test_editor
+             tests/test_editor \
+             tests/test_session_timeout
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -166,6 +168,10 @@ tests/test_sandbox: tests/test_sandbox.c src/core/sandbox.c \
 
 # CMP-215: editor integration — $VISUAL/$EDITOR fallback, sandbox path check
 tests/test_editor: tests/test_editor.c src/tools/editor.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-212: session timeout — parse_duration()
+tests/test_session_timeout: tests/test_session_timeout.c src/util/duration.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

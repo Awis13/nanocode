@@ -9,10 +9,14 @@
 #include <string.h>
 #include <signal.h>
 #include <limits.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "../include/config.h"
 #include "../include/editor.h"
 #include "../include/sandbox.h"
+#include "../include/status_file.h"
+#include "../include/daemon.h"
 #include "../src/core/loop.h"
 #include "../src/util/arena.h"
 #include "../src/util/duration.h"
@@ -64,13 +68,17 @@ int main(int argc, char **argv)
      * --sandbox                  force sandbox.enabled = true
      * --sandbox-profile <name>   override sandbox.profile
      * --timeout <duration>       session timeout (e.g. 30m, 1h, 90s)
+     * --daemon                   run as Unix socket daemon
      * -------------------------------------------------------------------- */
     int         cli_sandbox         = 0;
+    int         cli_daemon          = 0;
     const char *cli_sandbox_profile = NULL;
     char        cli_timeout_arg[64] = "";
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--sandbox") == 0) {
+        if (strcmp(argv[i], "--daemon") == 0) {
+            cli_daemon = 1;
+        } else if (strcmp(argv[i], "--sandbox") == 0) {
             cli_sandbox = 1;
         } else if (strcmp(argv[i], "--sandbox-profile") == 0) {
             if (i + 1 >= argc) {

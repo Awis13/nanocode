@@ -80,6 +80,7 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "keys.scroll_down",              "ctrl-d"                    },
     /* [session] */
     { "session.max_files_created",     "50"                        },
+    { "session.timeout",               ""                          },
     /* [performance] */
     { "performance.idle_timeout_ms",   "5000"                      },
     { "performance.max_output_lines",  "10000"                     },
@@ -172,7 +173,8 @@ static const char s_default_toml_b[] =
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "[session]\n"
-    "max_files_created = 50              # Max new files an agent may create per session\n";
+    "max_files_created = 50              # Max new files an agent may create per session\n"
+    "timeout           = \"\"             # Session auto-terminate duration: 30m, 1h, 90s, or empty for none\n";
 
 /* -------------------------------------------------------------------------
  * Config struct (arena-allocated; entries are embedded)

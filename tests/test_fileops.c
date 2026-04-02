@@ -336,6 +336,113 @@ TEST(test_glob_no_match)
 }
 
 /* -------------------------------------------------------------------------
+ * fileops_set_limits — write within size limit → success
+ * ---------------------------------------------------------------------- */
+
+TEST(test_write_within_size_limit)
+{
+    fileops_set_limits(1024 * 1024, 100); /* 1 MB, 100 files */
+    Arena      *a    = arena_new(2 << 20);
+    const char *path = TMP_PREFIX "lim1.txt";
+
+    char args[512];
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"small content\"}", path);
+
+    ToolResult r = fileops_write(a, args);
+    ASSERT_EQ(r.error, 0);
+
+    unlink(path);
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * fileops_set_limits — write exceeding max_file_size → error
+ * ---------------------------------------------------------------------- */
+
+TEST(test_write_exceeds_file_size)
+{
+    fileops_set_limits(10, 100); /* 10 bytes max */
+    Arena      *a    = arena_new(2 << 20);
+    const char *path = TMP_PREFIX "lim2.txt";
+
+    char args[512];
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"this is more than ten bytes\"}",
+             path);
+
+    ToolResult r = fileops_write(a, args);
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(strstr(r.content, "file too large"));
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * fileops_set_limits — exceed max_files_created → error on the extra file
+ * ---------------------------------------------------------------------- */
+
+TEST(test_write_session_file_limit)
+{
+    fileops_set_limits(1024 * 1024, 2); /* allow at most 2 new files */
+    Arena *a = arena_new(2 << 20);
+
+    /* First file — OK */
+    const char *p1 = TMP_PREFIX "fc1.txt";
+    char args[512];
+    snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"a\"}", p1);
+    ToolResult r1 = fileops_write(a, args);
+    ASSERT_EQ(r1.error, 0);
+
+    /* Second file — OK */
+    const char *p2 = TMP_PREFIX "fc2.txt";
+    snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"b\"}", p2);
+    ToolResult r2 = fileops_write(a, args);
+    ASSERT_EQ(r2.error, 0);
+
+    /* Third file — should fail */
+    const char *p3 = TMP_PREFIX "fc3.txt";
+    snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"c\"}", p3);
+    ToolResult r3 = fileops_write(a, args);
+    ASSERT_EQ(r3.error, 1);
+    ASSERT_NOT_NULL(strstr(r3.content, "session file limit reached"));
+
+    unlink(p1);
+    unlink(p2);
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * fileops_set_limits — edit (overwrite) does NOT count against max_files
+ * ---------------------------------------------------------------------- */
+
+TEST(test_edit_no_new_file_count)
+{
+    fileops_set_limits(1024 * 1024, 1); /* only 1 new file allowed */
+    Arena      *a    = arena_new(2 << 20);
+    const char *path = write_tmp("fce.txt", "original content\n");
+
+    /* Write a new file — consumes the quota */
+    const char *p2 = TMP_PREFIX "fce2.txt";
+    char args[512];
+    snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"new\"}", p2);
+    ToolResult rw = fileops_write(a, args);
+    ASSERT_EQ(rw.error, 0);
+
+    /* Edit existing file — must not count as a new file */
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\","
+             "\"old_string\":\"original\","
+             "\"new_string\":\"updated\"}",
+             path);
+    ToolResult re = fileops_edit(a, args);
+    ASSERT_EQ(re.error, 0);
+
+    unlink(p2);
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
  * registration smoke test
  * ---------------------------------------------------------------------- */
 
@@ -370,6 +477,11 @@ int main(void)
     RUN_TEST(test_glob_recursive_c);
     RUN_TEST(test_glob_double_star);
     RUN_TEST(test_glob_no_match);
+
+    RUN_TEST(test_write_within_size_limit);
+    RUN_TEST(test_write_exceeds_file_size);
+    RUN_TEST(test_write_session_file_limit);
+    RUN_TEST(test_edit_no_new_file_count);
 
     RUN_TEST(test_register_all_no_crash);
 

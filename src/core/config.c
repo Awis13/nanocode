@@ -45,6 +45,7 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "sandbox.profile",               "strict"                    },
     { "sandbox.allowed_paths",         ""                          },
     { "sandbox.allowed_commands",      ""                          },
+    { "sandbox.denied_commands",       ""                          },
     { "sandbox.network",               "false"                     },
     { "sandbox.max_file_size",         "10485760"                  },
     /* [ui] */
@@ -77,6 +78,8 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "keys.cancel",                   "ctrl-c"                    },
     { "keys.scroll_up",                "ctrl-u"                    },
     { "keys.scroll_down",              "ctrl-d"                    },
+    /* [session] */
+    { "session.max_files_created",     "50"                        },
     /* [performance] */
     { "performance.idle_timeout_ms",   "5000"                      },
     { "performance.max_output_lines",  "10000"                     },
@@ -108,6 +111,7 @@ static const char s_default_toml[] =
     "profile          = \"strict\"           # Sandbox profile: strict | permissive | custom\n"
     "allowed_paths    = \"\"                 # Colon-separated absolute paths (required for custom)\n"
     "allowed_commands = \"\"                 # Colon-separated command basenames (required for custom)\n"
+    "denied_commands  = \"\"                 # Colon-separated command basenames to always block\n"
     "network          = false               # Allow outbound network from tools\n"
     "max_file_size    = 10485760            # Max bytes per file write (10 MB default)\n"
     "\n"
@@ -159,7 +163,11 @@ static const char s_default_toml[] =
     "[performance]\n"
     "idle_timeout_ms   = 5000             # Idle loop sleep time in milliseconds\n"
     "max_output_lines  = 10000            # Max lines kept in the output ring buffer\n"
-    "history_limit_mb  = 10              # Max size of the input history file in MB\n";
+    "history_limit_mb  = 10              # Max size of the input history file in MB\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[session]\n"
+    "max_files_created = 50              # Max new files an agent may create per session\n";
 
 /* -------------------------------------------------------------------------
  * Config struct (arena-allocated; entries are embedded)
@@ -439,6 +447,7 @@ int config_set(Config *cfg, const char *key, const char *val)
 static const char * const s_sections[] = {
     "provider", "sandbox", "ui", "system_prompt",
     "rendering", "theme", "layout", "behavior", "keys", "performance",
+    "session",
     NULL
 };
 

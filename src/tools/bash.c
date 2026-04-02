@@ -344,6 +344,52 @@ static void apply_sandbox(const char *cwd)
 }
 
 /* -------------------------------------------------------------------------
+ * Command allow/deny filter state
+ * ---------------------------------------------------------------------- */
+
+static char s_allowed_cmds[1024];
+static char s_denied_cmds[1024];
+
+void bash_set_cmd_filter(const char *allowed_colon_sep,
+                         const char *denied_colon_sep)
+{
+    if (allowed_colon_sep) {
+        strncpy(s_allowed_cmds, allowed_colon_sep, sizeof(s_allowed_cmds) - 1);
+        s_allowed_cmds[sizeof(s_allowed_cmds) - 1] = '\0';
+    } else {
+        s_allowed_cmds[0] = '\0';
+    }
+    if (denied_colon_sep) {
+        strncpy(s_denied_cmds, denied_colon_sep, sizeof(s_denied_cmds) - 1);
+        s_denied_cmds[sizeof(s_denied_cmds) - 1] = '\0';
+    } else {
+        s_denied_cmds[0] = '\0';
+    }
+}
+
+/*
+ * Check whether `name` appears in a colon-separated list.
+ * Returns 1 if found, 0 if not.
+ */
+static int cmd_in_list(const char *list, const char *name)
+{
+    char copy[1024];
+    strncpy(copy, list, sizeof(copy) - 1);
+    copy[sizeof(copy) - 1] = '\0';
+
+    char *p = copy;
+    while (p) {
+        char *colon = strchr(p, ':');
+        if (colon)
+            *colon = '\0';
+        if (*p && strcmp(p, name) == 0)
+            return 1;
+        p = colon ? colon + 1 : NULL;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------
  * SIGALRM handler — kills the child process group on timeout
  * ---------------------------------------------------------------------- */
 
@@ -388,6 +434,39 @@ static ToolResult bash_handler(Arena *arena, const char *args_json)
         int t = atoi(tmout_buf);
         if (t > 0)
             timeout_secs = t;
+    }
+
+    /* Apply command allow/deny filter before allocating any resources. */
+    {
+        /* Extract first whitespace-delimited token of cmd. */
+        char cmd_base[256];
+        size_t tlen = strcspn(cmd, " \t\r\n");
+        if (tlen >= sizeof(cmd_base))
+            tlen = sizeof(cmd_base) - 1;
+        memcpy(cmd_base, cmd, tlen);
+        cmd_base[tlen] = '\0';
+
+        /* Strip directory prefix to get bare basename. */
+        char *slash = strrchr(cmd_base, '/');
+        if (slash)
+            memmove(cmd_base, slash + 1, strlen(slash)); /* includes NUL */
+
+        /* Denylist check first. */
+        if (s_denied_cmds[0] && cmd_in_list(s_denied_cmds, cmd_base)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "{\"error\":\"command denied\",\"cmd\":\"%s\"}", cmd_base);
+            return make_error(arena, msg);
+        }
+
+        /* Allowlist check second. */
+        if (s_allowed_cmds[0] && !cmd_in_list(s_allowed_cmds, cmd_base)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "{\"error\":\"command not in allowlist\",\"cmd\":\"%s\"}",
+                     cmd_base);
+            return make_error(arena, msg);
+        }
     }
 
     /* Create pipe: child writes stdout+stderr, parent reads. */

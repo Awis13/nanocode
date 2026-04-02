@@ -12,6 +12,8 @@
 #include "../include/config.h"
 #include "../include/sandbox.h"
 #include "../src/util/arena.h"
+#include "../src/tools/fileops.h"
+#include "../src/tools/bash.h"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -82,6 +84,18 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+
+    /* -----------------------------------------------------------------------
+     * Phase 3.5: Wire tool resource limits and command filter.
+     * -------------------------------------------------------------------- */
+    fileops_set_limits(
+        (long)config_get_int(cfg, "sandbox.max_file_size"),
+        config_get_int(cfg, "session.max_files_created")
+    );
+    bash_set_cmd_filter(
+        config_get_str(cfg, "sandbox.allowed_commands"),
+        config_get_str(cfg, "sandbox.denied_commands")
+    );
 
     /* -----------------------------------------------------------------------
      * Phase 4: Main loop (stub — event loop + TUI wired in later milestones).

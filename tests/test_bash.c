@@ -282,6 +282,74 @@ TEST(test_multiline_output) {
 }
 
 /* -------------------------------------------------------------------------
+ * Command filter tests (no fork — safe under all build configs)
+ * ---------------------------------------------------------------------- */
+
+TEST(test_cmd_denylist_blocks) {
+    tool_registry_reset();
+    bash_tool_register();
+    bash_set_cmd_filter("", "cat:rm"); /* deny cat and rm */
+
+    Arena *a = new_arena();
+    ToolResult r = run(a, "{\"command\":\"cat /dev/null\"}");
+
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "command denied") != NULL);
+
+    bash_set_cmd_filter("", ""); /* reset */
+    arena_free(a);
+}
+
+TEST(test_cmd_not_in_allowlist) {
+    tool_registry_reset();
+    bash_tool_register();
+    bash_set_cmd_filter("echo:ls", ""); /* only echo and ls allowed */
+
+    Arena *a = new_arena();
+    ToolResult r = run(a, "{\"command\":\"cat /dev/null\"}");
+
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "command not in allowlist") != NULL);
+
+    bash_set_cmd_filter("", ""); /* reset */
+    arena_free(a);
+}
+
+TEST(test_cmd_empty_lists_allows_all) {
+    tool_registry_reset();
+    bash_tool_register();
+    bash_set_cmd_filter("", ""); /* no restrictions */
+
+    Arena *a = new_arena();
+    ToolResult r = run(a, "{\"command\":\"echo hi\"}");
+
+    /* No filter error — command runs normally. */
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "denied") == NULL);
+    ASSERT_TRUE(strstr(r.content, "allowlist") == NULL);
+
+    arena_free(a);
+}
+
+TEST(test_cmd_in_allowlist_runs) {
+    tool_registry_reset();
+    bash_tool_register();
+    bash_set_cmd_filter("echo:true", ""); /* echo and true allowed */
+
+    Arena *a = new_arena();
+    ToolResult r = run(a, "{\"command\":\"echo allowed\"}");
+
+    ASSERT_EQ(r.error, 0);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "allowed") != NULL);
+
+    bash_set_cmd_filter("", ""); /* reset */
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
  * Test: result length matches content
  * ---------------------------------------------------------------------- */
 
@@ -335,6 +403,11 @@ int main(void)
     RUN_TEST(test_timeout_numeric_json);
     RUN_TEST(test_multiline_output);
     RUN_TEST(test_result_len_matches_content);
+
+    RUN_TEST(test_cmd_denylist_blocks);
+    RUN_TEST(test_cmd_not_in_allowlist);
+    RUN_TEST(test_cmd_empty_lists_allows_all);
+    RUN_TEST(test_cmd_in_allowlist_runs);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

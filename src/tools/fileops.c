@@ -33,6 +33,21 @@
 #define ARG_TOK_MAX     256
 
 /* -------------------------------------------------------------------------
+ * Per-session resource limits (set once at startup via fileops_set_limits)
+ * ---------------------------------------------------------------------- */
+
+static long s_max_file_size     = 10 * 1024 * 1024;  /* 10 MB */
+static int  s_max_files_created = 50;
+static int  s_files_created     = 0;
+
+void fileops_set_limits(long max_file_size_bytes, int max_files_created)
+{
+    s_max_file_size     = max_file_size_bytes;
+    s_max_files_created = max_files_created;
+    s_files_created     = 0;
+}
+
+/* -------------------------------------------------------------------------
  * Path safety: canonicalize path and restrict to working directory.
  *
  * Resolves . and .. components purely by string manipulation (no filesystem
@@ -528,6 +543,28 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
     if (!path)
         return err_result(arena, "write_file: path outside working directory");
 
+    /* Enforce file size limit. */
+    size_t clen = strlen(content);
+    if (s_max_file_size > 0 && (long)clen > s_max_file_size) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "{\"error\":\"file too large\",\"limit_bytes\":%ld}",
+                 s_max_file_size);
+        return err_result(arena, msg);
+    }
+
+    /* Enforce per-session new-file limit. */
+    struct stat st_check;
+    int is_new_file = (stat(path, &st_check) != 0);
+    if (is_new_file && s_max_files_created > 0 &&
+        s_files_created >= s_max_files_created) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "{\"error\":\"session file limit reached\",\"limit\":%d}",
+                 s_max_files_created);
+        return err_result(arena, msg);
+    }
+
     if (ensure_parent_dirs(path) < 0) {
         char msg[4096];
         snprintf(msg, sizeof(msg),
@@ -545,7 +582,6 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
         return err_result(arena, msg);
     }
 
-    size_t clen    = strlen(content);
     size_t written = fwrite(content, 1, clen, f);
     int    wr_err  = ferror(f);
     fclose(f);
@@ -555,6 +591,9 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
         snprintf(msg, sizeof(msg), "write_file: write error on '%s'", path);
         return err_result(arena, msg);
     }
+
+    if (is_new_file)
+        s_files_created++;
 
     char *ok = arena_alloc(arena, 128);
     int   n  = snprintf(ok, 128, "wrote %zu bytes to %s", clen, path);
@@ -646,6 +685,15 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
     size_t out_len   = file_len
                      + n_replace * new_len
                      - n_replace * old_len;
+
+    /* Enforce file size limit on resulting content. */
+    if (s_max_file_size > 0 && (long)out_len > s_max_file_size) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "{\"error\":\"file too large\",\"limit_bytes\":%ld}",
+                 s_max_file_size);
+        return err_result(arena, msg);
+    }
 
     char  *out_buf = arena_alloc(arena, out_len + 1);
     char  *dst     = out_buf;

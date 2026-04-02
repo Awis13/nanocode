@@ -23,6 +23,21 @@ void fileops_register_all(void);
 void fileops_set_limits(long max_file_size_bytes, int max_files_created);
 
 /*
+ * Attach an audit log so that resource-limit violations (file-too-large,
+ * session file cap) are recorded as sandbox_deny events.
+ * Call once from main() after audit_open().  NULL disables (default).
+ */
+typedef struct AuditLog AuditLog;
+void fileops_set_audit(AuditLog *log, const char *session_id,
+                       const char *sandbox_profile);
+
+/*
+ * Return the number of new files created so far in this session.
+ * Useful for clean-shutdown summaries.
+ */
+int fileops_get_files_created(void);
+
+/*
  * Individual tool handlers — exported so tests can invoke them directly
  * without going through the registry.
  *

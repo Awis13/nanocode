@@ -34,4 +34,13 @@ void bash_tool_register(void);
 void bash_set_cmd_filter(const char *allowed_colon_sep,
                          const char *denied_colon_sep);
 
+/*
+ * Attach an audit log so that command filter denials are recorded as
+ * sandbox_deny events.  Call once from main() after audit_open().
+ * NULL disables audit logging from this module (the default).
+ */
+typedef struct AuditLog AuditLog;
+void bash_set_audit(AuditLog *log, const char *session_id,
+                    const char *sandbox_profile);
+
 #endif /* BASH_H */

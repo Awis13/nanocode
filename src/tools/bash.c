@@ -19,6 +19,7 @@
 
 #include "bash.h"
 #include "executor.h"
+#include "../../include/audit.h"
 #include "../util/arena.h"
 #include "../util/json.h"
 
@@ -347,8 +348,19 @@ static void apply_sandbox(const char *cwd)
  * Command allow/deny filter state
  * ---------------------------------------------------------------------- */
 
-static char s_allowed_cmds[1024];
-static char s_denied_cmds[1024];
+static char        s_allowed_cmds[1024];
+static char        s_denied_cmds[1024];
+static AuditLog   *s_bash_audit_log     = NULL;
+static const char *s_bash_audit_session = NULL;
+static const char *s_bash_audit_sandbox = NULL;
+
+void bash_set_audit(AuditLog *log, const char *session_id,
+                    const char *sandbox_profile)
+{
+    s_bash_audit_log     = log;
+    s_bash_audit_session = session_id;
+    s_bash_audit_sandbox = sandbox_profile;
+}
 
 void bash_set_cmd_filter(const char *allowed_colon_sep,
                          const char *denied_colon_sep)
@@ -453,6 +465,8 @@ static ToolResult bash_handler(Arena *arena, const char *args_json)
 
         /* Denylist check first. */
         if (s_denied_cmds[0] && cmd_in_list(s_denied_cmds, cmd_base)) {
+            audit_sandbox_deny(s_bash_audit_log, cmd_base,
+                               s_bash_audit_session, s_bash_audit_sandbox);
             char msg[256];
             snprintf(msg, sizeof(msg),
                      "{\"error\":\"command denied\",\"cmd\":\"%s\"}", cmd_base);
@@ -461,6 +475,8 @@ static ToolResult bash_handler(Arena *arena, const char *args_json)
 
         /* Allowlist check second. */
         if (s_allowed_cmds[0] && !cmd_in_list(s_allowed_cmds, cmd_base)) {
+            audit_sandbox_deny(s_bash_audit_log, cmd_base,
+                               s_bash_audit_session, s_bash_audit_sandbox);
             char msg[256];
             snprintf(msg, sizeof(msg),
                      "{\"error\":\"command not in allowlist\",\"cmd\":\"%s\"}",

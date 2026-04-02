@@ -82,6 +82,11 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "keys.scroll_down",              "ctrl-d"                    },
     /* [pet] */
     { "pet",                           ""                          },
+    /* [audit] */
+    { "audit.enabled",             "true"                     },
+    { "audit.path",                ""                         },
+    { "audit.max_size_bytes",      "10485760"                 },
+    { "audit.max_files",           "5"                        },
     /* [session] */
     { "session.mode",                  ""                          },
     { "session.max_files_created",     "50"                        },

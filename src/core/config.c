@@ -90,7 +90,10 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
 /*
  * Fully-commented default config written on first run (CMP-187).
  */
-static const char s_default_toml[] =
+/* Split into two halves so each literal stays under the C99 4095-byte
+ * minimum portability limit (-Woverlength-strings).  Both halves are
+ * written by config_write_defaults() below. */
+static const char s_default_toml_a[] =
     "# nanocode configuration\n"
     "# ~/.nanocode/config.toml\n"
     "#\n"
@@ -135,9 +138,11 @@ static const char s_default_toml[] =
     "[theme]\n"
     "accent_color    = \"cyan\"              # Accent colour (ANSI name or #rrggbb)\n"
     "diff_add_color  = \"green\"             # Colour for added diff lines\n"
-    "diff_rm_color   = \"red\"               # Colour for removed diff lines\n"
+    "diff_rm_color   = \"red\"              # Colour for removed diff lines\n"
     "syntax_theme    = \"monokai\"           # Syntax highlighting theme name\n"
-    "true_color      = true                # 24-bit colour (false for 256-color terminals)\n"
+    "true_color      = true                # 24-bit colour (false for 256-color terminals)\n";
+
+static const char s_default_toml_b[] =
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "[layout]\n"
@@ -348,7 +353,7 @@ Config *config_load_path(Arena *arena, const char *path)
     if (!f) {
         if (errno == ENOENT) {
             f = fopen(path, "w");
-            if (f) { fputs(s_default_toml, f); fclose(f); }
+            if (f) { fputs(s_default_toml_a, f); fputs(s_default_toml_b, f); fclose(f); }
         }
         return cfg;
     }

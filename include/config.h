@@ -1,5 +1,5 @@
 /*
- * config.h — nanocode configuration system
+ * config.h -- nanocode configuration system
  *
  * Loads ~/.nanocode/config.toml on startup. Creates the file with compiled-in
  * defaults if it is missing. All storage is arena-allocated; no individual frees.
@@ -11,6 +11,14 @@
  *   [sandbox]       enabled (bool), profile
  *   [ui]            theme, word_wrap (bool), stream_delay_ms
  *   [system_prompt] append
+ *   [rendering]     target_fps, frame_batch_ms, scroll_mode
+ *   [theme]         accent_color, diff_add_color, diff_rm_color,
+ *                   syntax_theme, true_color (bool)
+ *   [layout]        panel_split, status_bar_position, max_width, padding
+ *   [behavior]      auto_approve_tools (bool), confirm_destructive (bool),
+ *                   max_context_tokens
+ *   [keys]          submit, cancel, scroll_up, scroll_down
+ *   [performance]   idle_timeout_ms, max_output_lines, history_limit_mb
  */
 
 #ifndef CONFIG_H
@@ -18,42 +26,17 @@
 
 #include "../src/util/arena.h"
 
-/* Opaque config handle. */
 typedef struct Config Config;
 
-/*
- * Load config from `path`.  If the file does not exist, write defaults to it
- * and return a Config with compiled-in defaults.  Invalid lines are skipped
- * with a warning; the function never crashes.
- *
- * Returns arena-allocated Config, or NULL on OOM.
- */
 Config *config_load_path(Arena *arena, const char *path);
-
-/*
- * Load config from ~/.nanocode/config.toml (creating it if absent).
- * Convenience wrapper around config_load_path().
- * Returns NULL on OOM or if HOME is unset.
- */
 Config *config_load(Arena *arena);
 
-/*
- * Look up a string value by dotted key (e.g. "provider.model").
- * Returns the compiled-in default string if the key is absent.
- * Never returns NULL.
- */
 const char *config_get_str(const Config *cfg, const char *key);
+int         config_get_int(const Config *cfg, const char *key);
+int         config_get_bool(const Config *cfg, const char *key);
 
-/*
- * Look up an integer value.
- * Returns the compiled-in default (or 0) if the key is absent or non-numeric.
- */
-int config_get_int(const Config *cfg, const char *key);
-
-/*
- * Look up a boolean value ("true"/"1" → 1, "false"/"0" → 0).
- * Returns the compiled-in default (or 0) if the key is absent or unrecognised.
- */
-int config_get_bool(const Config *cfg, const char *key);
+int config_set(Config *cfg, const char *key, const char *val);
+int config_save(const Config *cfg, const char *path);
+int config_cmd_set(Config *cfg, const char *line);
 
 #endif /* CONFIG_H */

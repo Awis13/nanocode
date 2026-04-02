@@ -1,9 +1,15 @@
 /*
- * config.c — nanocode configuration system (CMP-141)
+ * config.c — nanocode configuration system (CMP-141, CMP-187)
  *
  * Minimal TOML parser: string / int / bool values, sections.
  * No arrays, no tables-of-tables. Invalid lines are warned and skipped.
  * All storage lives in the caller's Arena (persistent, no individual frees).
+ *
+ * CMP-187 additions:
+ *   - Six new config sections: rendering, theme, layout, behavior, keys, performance
+ *   - config_set()     — mutate a live Config at runtime
+ *   - config_save()    — persist current config to a TOML file with comments
+ *   - config_cmd_set() — parse ":set key value" input and call config_set
  */
 
 #include "../../include/config.h"
@@ -29,41 +35,123 @@
  * ---------------------------------------------------------------------- */
 
 static const struct { const char *key; const char *val; } s_defaults[] = {
-    { "provider.api_key",        ""                              },
-    { "provider.base_url",       "https://api.anthropic.com"    },
-    { "provider.model",          "claude-opus-4-6"              },
-    { "provider.timeout_ms",     "30000"                        },
-    { "sandbox.enabled",         "true"                         },
-    { "sandbox.profile",         "strict"                       },
-    { "ui.theme",                "dark"                         },
-    { "ui.word_wrap",            "true"                         },
-    { "ui.stream_delay_ms",      "0"                            },
-    { "system_prompt.append",    ""                             },
+    /* [provider] */
+    { "provider.api_key",              ""                           },
+    { "provider.base_url",             "https://api.anthropic.com" },
+    { "provider.model",                "claude-opus-4-6"           },
+    { "provider.timeout_ms",           "30000"                     },
+    /* [sandbox] */
+    { "sandbox.enabled",               "true"                      },
+    { "sandbox.profile",               "strict"                    },
+    /* [ui] */
+    { "ui.theme",                      "dark"                      },
+    { "ui.word_wrap",                  "true"                      },
+    { "ui.stream_delay_ms",            "0"                         },
+    /* [system_prompt] */
+    { "system_prompt.append",          ""                          },
+    /* [rendering] */
+    { "rendering.target_fps",          "60"                        },
+    { "rendering.frame_batch_ms",      "16"                        },
+    { "rendering.scroll_mode",         "smooth"                    },
+    /* [theme] */
+    { "theme.accent_color",            "cyan"                      },
+    { "theme.diff_add_color",          "green"                     },
+    { "theme.diff_rm_color",           "red"                       },
+    { "theme.syntax_theme",            "monokai"                   },
+    { "theme.true_color",              "true"                      },
+    /* [layout] */
+    { "layout.panel_split",            "horizontal"                },
+    { "layout.status_bar_position",    "bottom"                    },
+    { "layout.max_width",              "0"                         },
+    { "layout.padding",                "1"                         },
+    /* [behavior] */
+    { "behavior.auto_approve_tools",   "false"                     },
+    { "behavior.confirm_destructive",  "true"                      },
+    { "behavior.max_context_tokens",   "100000"                    },
+    /* [keys] */
+    { "keys.submit",                   "enter"                     },
+    { "keys.cancel",                   "ctrl-c"                    },
+    { "keys.scroll_up",                "ctrl-u"                    },
+    { "keys.scroll_down",              "ctrl-d"                    },
+    /* [performance] */
+    { "performance.idle_timeout_ms",   "5000"                      },
+    { "performance.max_output_lines",  "10000"                     },
+    { "performance.history_limit_mb",  "10"                        },
     { NULL, NULL }
 };
 
-/* Default config file content written on first run. */
+/*
+ * Fully-commented default config written on first run (CMP-187).
+ */
 static const char s_default_toml[] =
     "# nanocode configuration\n"
     "# ~/.nanocode/config.toml\n"
+    "#\n"
+    "# Edit this file to customise nanocode.\n"
+    "# Changes take effect on the next startup unless noted as live-reloadable.\n"
+    "# Runtime changes: use  :set key value  in the prompt.\n"
     "\n"
+    "# ---------------------------------------------------------------------------\n"
     "[provider]\n"
-    "api_key      = \"\"\n"
-    "base_url     = \"https://api.anthropic.com\"\n"
-    "model        = \"claude-opus-4-6\"\n"
-    "timeout_ms   = 30000\n"
+    "api_key      = \"\"                      # API key (or set ANTHROPIC_API_KEY)\n"
+    "base_url     = \"https://api.anthropic.com\"  # API endpoint\n"
+    "model        = \"claude-opus-4-6\"       # Model ID\n"
+    "timeout_ms   = 30000                   # Request timeout in milliseconds\n"
     "\n"
+    "# ---------------------------------------------------------------------------\n"
     "[sandbox]\n"
-    "enabled      = true\n"
-    "profile      = \"strict\"\n"
+    "enabled      = true                    # Enable tool sandboxing\n"
+    "profile      = \"strict\"               # Sandbox profile: strict | permissive\n"
     "\n"
+    "# ---------------------------------------------------------------------------\n"
     "[ui]\n"
-    "theme        = \"dark\"\n"
-    "word_wrap    = true\n"
-    "stream_delay_ms = 0\n"
+    "theme        = \"dark\"                  # Colour theme: dark | light | auto\n"
+    "word_wrap    = true                    # Wrap long lines in the output panel\n"
+    "stream_delay_ms = 0                   # Extra delay between streamed tokens (ms)\n"
     "\n"
+    "# ---------------------------------------------------------------------------\n"
     "[system_prompt]\n"
-    "append       = \"\"\n";
+    "append       = \"\"                      # Extra text appended to the system prompt\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[rendering]\n"
+    "target_fps      = 60                  # Target render frames per second\n"
+    "frame_batch_ms  = 16                  # Max ms to batch incoming tokens before a frame\n"
+    "scroll_mode     = \"smooth\"            # Scroll mode: smooth | jump\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[theme]\n"
+    "accent_color    = \"cyan\"              # Accent colour (ANSI name or #rrggbb)\n"
+    "diff_add_color  = \"green\"             # Colour for added diff lines\n"
+    "diff_rm_color   = \"red\"               # Colour for removed diff lines\n"
+    "syntax_theme    = \"monokai\"           # Syntax highlighting theme name\n"
+    "true_color      = true                # 24-bit colour (false for 256-color terminals)\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[layout]\n"
+    "panel_split          = \"horizontal\"  # Panel split direction: horizontal | vertical\n"
+    "status_bar_position  = \"bottom\"      # Status bar placement: top | bottom\n"
+    "max_width            = 0             # Max output width in columns (0 = terminal width)\n"
+    "padding              = 1             # Inner padding in character cells\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[behavior]\n"
+    "auto_approve_tools   = false         # Skip confirmation prompts for all tools\n"
+    "confirm_destructive  = true          # Extra confirmation for destructive tool calls\n"
+    "max_context_tokens   = 100000        # Hard cap on context window tokens\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[keys]\n"
+    "submit       = \"enter\"               # Key to submit input (enter | ctrl-j)\n"
+    "cancel       = \"ctrl-c\"              # Key to cancel in-progress request\n"
+    "scroll_up    = \"ctrl-u\"              # Key to scroll output up\n"
+    "scroll_down  = \"ctrl-d\"              # Key to scroll output down\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[performance]\n"
+    "idle_timeout_ms   = 5000             # Idle loop sleep time in milliseconds\n"
+    "max_output_lines  = 10000            # Max lines kept in the output ring buffer\n"
+    "history_limit_mb  = 10              # Max size of the input history file in MB\n";
 
 /* -------------------------------------------------------------------------
  * Config struct (arena-allocated; entries are embedded)
@@ -81,14 +169,12 @@ struct Config {
  * Internal helpers
  * ---------------------------------------------------------------------- */
 
-/* Trim leading ASCII whitespace in-place; returns pointer into s. */
 static char *ltrim(char *s)
 {
     while (*s == ' ' || *s == '\t') s++;
     return s;
 }
 
-/* Trim trailing ASCII whitespace + CR in-place. */
 static void rtrim(char *s)
 {
     size_t n = strlen(s);
@@ -96,35 +182,32 @@ static void rtrim(char *s)
         s[--n] = '\0';
 }
 
-/* Store or overwrite a key/value pair in the config. */
-static void cfg_set(struct Config *cfg, const char *key, const char *val)
+static int cfg_set_internal(struct Config *cfg,
+                             const char *key, const char *val)
 {
-    /* Overwrite existing entry if present. */
     for (int i = 0; i < cfg->count; i++) {
         if (strncmp(cfg->entries[i].key, key, CFG_KEY_MAX) == 0) {
             strncpy(cfg->entries[i].val, val, CFG_VAL_MAX - 1);
             cfg->entries[i].val[CFG_VAL_MAX - 1] = '\0';
-            return;
+            return 0;
         }
     }
-    /* Append new entry. */
     if (cfg->count >= CFG_MAX_ENTRIES) {
-        fprintf(stderr, "config: warning: entry limit reached, skipping key: %s\n", key);
-        return;
+        fprintf(stderr,
+                "config: warning: entry limit reached, skipping key: %s\n",
+                key);
+        return -2;
     }
     strncpy(cfg->entries[cfg->count].key, key, CFG_KEY_MAX - 1);
     cfg->entries[cfg->count].key[CFG_KEY_MAX - 1] = '\0';
     strncpy(cfg->entries[cfg->count].val, val, CFG_VAL_MAX - 1);
     cfg->entries[cfg->count].val[CFG_VAL_MAX - 1] = '\0';
     cfg->count++;
+    return 0;
 }
 
 /* -------------------------------------------------------------------------
- * TOML parser (~200 LOC)
- *
- * Parses a null-terminated TOML text into `cfg`.
- * Supports: sections [name], key = value, string/int/bool values.
- * Skips: blank lines, # comments, unrecognised syntax (with a warning).
+ * TOML parser
  * ---------------------------------------------------------------------- */
 
 static void parse_toml(struct Config *cfg, const char *text)
@@ -135,11 +218,9 @@ static void parse_toml(struct Config *cfg, const char *text)
     int lineno = 0;
 
     while (*p) {
-        /* ---- Extract one line ---- */
         const char *nl = strchr(p, '\n');
         size_t len = nl ? (size_t)(nl - p) : strlen(p);
-        if (len >= CFG_LINE_MAX)
-            len = CFG_LINE_MAX - 1;
+        if (len >= CFG_LINE_MAX) len = CFG_LINE_MAX - 1;
         memcpy(line, p, len);
         line[len] = '\0';
         p = nl ? nl + 1 : p + len;
@@ -148,42 +229,39 @@ static void parse_toml(struct Config *cfg, const char *text)
         char *s = ltrim(line);
         rtrim(s);
 
-        /* Skip blank lines and comments. */
-        if (*s == '\0' || *s == '#')
-            continue;
+        if (*s == '\0' || *s == '#') continue;
 
-        /* ---- Section header: [name] ---- */
         if (*s == '[') {
             char *close = strchr(s + 1, ']');
             if (!close) {
-                fprintf(stderr, "config: warning: line %d: malformed section header\n",
+                fprintf(stderr,
+                        "config: warning: line %d: malformed section header\n",
                         lineno);
                 continue;
             }
             size_t slen = (size_t)(close - (s + 1));
             if (slen == 0 || slen >= sizeof(section)) {
-                fprintf(stderr, "config: warning: line %d: section name too long or empty\n",
-                        lineno);
+                fprintf(stderr,
+                        "config: warning: line %d: section name too long or"
+                        " empty\n", lineno);
                 continue;
             }
             memcpy(section, s + 1, slen);
             section[slen] = '\0';
-            /* Trim whitespace from section name. */
             char *ts = ltrim(section);
             rtrim(ts);
             memmove(section, ts, strlen(ts) + 1);
             continue;
         }
 
-        /* ---- Key = Value ---- */
         char *eq = strchr(s, '=');
         if (!eq) {
-            fprintf(stderr, "config: warning: line %d: skipping invalid line: %s\n",
+            fprintf(stderr,
+                    "config: warning: line %d: skipping invalid line: %s\n",
                     lineno, s);
             continue;
         }
 
-        /* Key: everything before '=', trimmed. */
         *eq = '\0';
         rtrim(s);
         char *key = ltrim(s);
@@ -192,32 +270,27 @@ static void parse_toml(struct Config *cfg, const char *text)
             continue;
         }
 
-        /* Value: everything after '=', trimmed, comment stripped. */
         char *v = ltrim(eq + 1);
-
-        /* Strip inline comment — only outside double-quotes. */
         int in_q = 0;
         for (char *vc = v; *vc; vc++) {
-            if (*vc == '"')        in_q = !in_q;
+            if (*vc == '"')          in_q = !in_q;
             if (*vc == '#' && !in_q) { *vc = '\0'; break; }
         }
         rtrim(v);
 
-        /* Strip surrounding double-quotes from string values. */
         size_t vlen = strlen(v);
         if (vlen >= 2 && v[0] == '"' && v[vlen - 1] == '"') {
             v[vlen - 1] = '\0';
             v++;
         }
 
-        /* Build dotted key. */
         char full_key[CFG_KEY_MAX];
         if (section[0])
             snprintf(full_key, sizeof(full_key), "%s.%s", section, key);
         else
             snprintf(full_key, sizeof(full_key), "%s", key);
 
-        cfg_set(cfg, full_key, v);
+        cfg_set_internal(cfg, full_key, v);
     }
 }
 
@@ -244,67 +317,52 @@ static const char *cfg_get_raw(const struct Config *cfg, const char *key)
 }
 
 /* -------------------------------------------------------------------------
- * Public API
+ * Public API — load
  * ---------------------------------------------------------------------- */
 
 Config *config_load_path(Arena *arena, const char *path)
 {
-    if (!arena || !path)
-        return NULL;
+    if (!arena || !path) return NULL;
 
     struct Config *cfg = arena_alloc(arena, sizeof(struct Config));
-    if (!cfg)
-        return NULL;
+    if (!cfg) return NULL;
     memset(cfg, 0, sizeof(struct Config));
 
     FILE *f = fopen(path, "r");
     if (!f) {
-        /* Write default config if the open failed (likely: file absent). */
         if (errno == ENOENT) {
             f = fopen(path, "w");
-            if (f) {
-                fputs(s_default_toml, f);
-                fclose(f);
-            }
+            if (f) { fputs(s_default_toml, f); fclose(f); }
         }
-        /* Return config with defaults (entries count == 0, getters fall back). */
         return cfg;
     }
 
-    /* Read entire file into arena. */
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return cfg;
-    }
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return cfg; }
     long fsz = ftell(f);
     rewind(f);
 
     if (fsz <= 0 || fsz > CFG_FILE_MAX) {
         if (fsz > CFG_FILE_MAX)
-            fprintf(stderr, "config: warning: file too large (%ld bytes), using defaults\n",
-                    fsz);
+            fprintf(stderr,
+                    "config: warning: file too large (%ld bytes), using"
+                    " defaults\n", fsz);
         fclose(f);
         return cfg;
     }
 
     char *buf = arena_alloc(arena, (size_t)fsz + 1);
-    if (!buf) {
-        fclose(f);
-        return cfg;
-    }
+    if (!buf) { fclose(f); return cfg; }
 
     size_t nread = fread(buf, 1, (size_t)fsz, f);
     fclose(f);
     buf[nread] = '\0';
-
     parse_toml(cfg, buf);
     return cfg;
 }
 
 Config *config_load(Arena *arena)
 {
-    if (!arena)
-        return NULL;
+    if (!arena) return NULL;
 
     const char *home = getenv("HOME");
     if (!home || !*home) {
@@ -314,7 +372,6 @@ Config *config_load(Arena *arena)
         return cfg;
     }
 
-    /* Ensure ~/.nanocode/ exists. */
     char dir[512];
     snprintf(dir, sizeof(dir), "%s/.nanocode", home);
     if (mkdir(dir, 0700) != 0 && errno != EEXIST)
@@ -325,6 +382,10 @@ Config *config_load(Arena *arena)
     snprintf(path, sizeof(path), "%s/.nanocode/config.toml", home);
     return config_load_path(arena, path);
 }
+
+/* -------------------------------------------------------------------------
+ * Public API — getters
+ * ---------------------------------------------------------------------- */
 
 const char *config_get_str(const Config *cfg, const char *key)
 {
@@ -346,9 +407,153 @@ int config_get_bool(const Config *cfg, const char *key)
     if (!v || !*v) return 0;
     if (strcmp(v, "true")  == 0 || strcmp(v, "1") == 0) return 1;
     if (strcmp(v, "false") == 0 || strcmp(v, "0") == 0) return 0;
-    /* Any non-zero integer counts as truthy. */
     char *end;
     long n = strtol(v, &end, 10);
     if (end != v) return n != 0;
     return 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Public API — config_set
+ * ---------------------------------------------------------------------- */
+
+int config_set(Config *cfg, const char *key, const char *val)
+{
+    if (!cfg || !key) return -1;
+    if (!val) val = "";
+    return cfg_set_internal(cfg, key, val);
+}
+
+/* -------------------------------------------------------------------------
+ * Public API — config_save
+ * ---------------------------------------------------------------------- */
+
+static const char * const s_sections[] = {
+    "provider", "sandbox", "ui", "system_prompt",
+    "rendering", "theme", "layout", "behavior", "keys", "performance",
+    NULL
+};
+
+int config_save(const Config *cfg, const char *path)
+{
+    if (!cfg || !path) { errno = EINVAL; return -1; }
+
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+
+    fputs("# nanocode configuration\n"
+          "# ~/.nanocode/config.toml\n"
+          "# Generated by :set — edit freely.\n\n", f);
+
+    int written[CFG_MAX_ENTRIES];
+    memset(written, 0, sizeof(written));
+
+    for (int si = 0; s_sections[si]; si++) {
+        const char *sec = s_sections[si];
+        int section_printed = 0;
+        size_t slen = strlen(sec);
+
+        for (int di = 0; s_defaults[di].key; di++) {
+            if (strncmp(s_defaults[di].key, sec, slen) != 0 ||
+                s_defaults[di].key[slen] != '.')
+                continue;
+
+            if (!section_printed) {
+                fprintf(f, "[%s]\n", sec);
+                section_printed = 1;
+            }
+
+            const char *short_key = s_defaults[di].key + slen + 1;
+            const char *val = config_get_str(cfg, s_defaults[di].key);
+
+            for (int ci = 0; ci < cfg->count; ci++) {
+                if (strcmp(cfg->entries[ci].key, s_defaults[di].key) == 0) {
+                    written[ci] = 1;
+                    break;
+                }
+            }
+
+            /* Bare (unquoted) for booleans and plain integers. */
+            int is_bare = (*val != '\0') &&
+                          (strcmp(val, "true") == 0 ||
+                           strcmp(val, "false") == 0);
+            if (!is_bare && *val != '\0') {
+                char *end;
+                strtol(val, &end, 10);
+                if (*end == '\0') is_bare = 1;
+            }
+
+            if (is_bare)
+                fprintf(f, "%s = %s\n", short_key, val);
+            else
+                fprintf(f, "%s = \"%s\"\n", short_key, val);
+        }
+
+        if (section_printed) fputc('\n', f);
+    }
+
+    /*
+     * Extra (user-added) keys: group by the section prefix extracted from
+     * the dotted key.  This ensures a correct round-trip through the parser.
+     */
+    char cur_extra_sec[CFG_KEY_MAX] = "";
+    for (int ci = 0; ci < cfg->count; ci++) {
+        if (written[ci]) continue;
+
+        const char *full = cfg->entries[ci].key;
+        const char *dot  = strchr(full, '.');
+
+        if (dot) {
+            char sec[CFG_KEY_MAX];
+            size_t slen = (size_t)(dot - full);
+            if (slen >= CFG_KEY_MAX) slen = CFG_KEY_MAX - 1;
+            memcpy(sec, full, slen);
+            sec[slen] = '\0';
+
+            if (strcmp(sec, cur_extra_sec) != 0) {
+                fprintf(f, "\n[%s]\n", sec);
+                strncpy(cur_extra_sec, sec, CFG_KEY_MAX - 1);
+                cur_extra_sec[CFG_KEY_MAX - 1] = '\0';
+            }
+            fprintf(f, "%s = \"%s\"\n", dot + 1, cfg->entries[ci].val);
+        } else {
+            if (cur_extra_sec[0]) { fputc('\n', f); cur_extra_sec[0] = '\0'; }
+            fprintf(f, "%s = \"%s\"\n", full, cfg->entries[ci].val);
+        }
+    }
+
+    fclose(f);
+    return 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Public API — config_cmd_set
+ * ---------------------------------------------------------------------- */
+
+int config_cmd_set(Config *cfg, const char *line)
+{
+    if (!cfg || !line) return -1;
+
+    char buf[CFG_LINE_MAX];
+    strncpy(buf, line, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    char *s = ltrim(buf);
+    if (*s == ':') s++;
+    s = ltrim(s);
+    if (strncmp(s, "set ", 4) == 0) { s += 4; s = ltrim(s); }
+
+    char *sp = s;
+    while (*sp && *sp != ' ' && *sp != '\t') sp++;
+    if (*sp == '\0') return -2;
+
+    *sp = '\0';
+    char *key = s;
+    char *val = ltrim(sp + 1);
+    rtrim(val);
+
+    if (*key == '\0' || *val == '\0') return -2;
+
+    int rc = config_set(cfg, key, val);
+    return (rc == 0) ? 0 : -3;
 }

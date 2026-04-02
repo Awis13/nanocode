@@ -23,12 +23,11 @@ typedef enum {
 
 typedef struct {
     ProviderType  type;
-    const char   *base_url;      /* e.g. "api.anthropic.com" or "localhost" */
-    int           port;          /* 443 for cloud, 11434 for Ollama */
-    int           use_tls;       /* 1 for cloud endpoints, 0 for localhost */
-    const char   *api_key;       /* may be NULL for local models */
-    const char   *model;         /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
-    int           thinking_budget; /* >0 enables extended thinking (Claude only) */
+    const char   *base_url;  /* e.g. "api.anthropic.com" or "localhost" */
+    int           port;      /* 443 for cloud, 11434 for Ollama */
+    int           use_tls;   /* 1 for cloud endpoints, 0 for localhost */
+    const char   *api_key;   /* may be NULL for local models */
+    const char   *model;     /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
 } ProviderConfig;
 
 /*
@@ -41,7 +40,7 @@ typedef void (*provider_token_cb)(const char *token, size_t len, void *ctx);
  * Called when a complete tool_use block has been streamed.
  * `id`    — tool_use_id (NUL-terminated)
  * `name`  — tool name  (NUL-terminated)
- * `input` — accumulated JSON input string (NUL-terminated, arena-allocated)
+ * `input` — accumulated JSON input string (NUL-terminated)
  */
 typedef void (*provider_tool_cb)(const char *id, const char *name,
                                  const char *input, void *ctx);

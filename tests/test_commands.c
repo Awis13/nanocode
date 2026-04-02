@@ -158,6 +158,34 @@ TEST(test_model_set) {
     pipe_close();
 }
 
+TEST(test_model_set_persists_across_dispatches) {
+    pipe_open();
+
+    Arena *a = arena_new(65536);
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+
+    CmdContext ctx = make_ctx();
+    char *model_name = NULL;
+    ctx.model = &model_name;
+    ctx.conv = conv;
+
+    ASSERT_EQ(cmd_dispatch("/model claude-opus-4-6", &ctx), 0);
+    ASSERT_NOT_NULL(model_name);
+    ASSERT_STR_EQ(model_name, "claude-opus-4-6");
+
+    /* A second dispatch reuses the stack frame in cmd_dispatch. */
+    ASSERT_EQ(cmd_dispatch("/help", &ctx), 0);
+    ASSERT_STR_EQ(model_name, "claude-opus-4-6");
+
+    const char *out = pipe_read_all();
+    ASSERT_TRUE(strstr(out, "Model set to: claude-opus-4-6") != NULL);
+    ASSERT_TRUE(strstr(out, "Available commands") != NULL);
+
+    arena_free(a);
+    pipe_close();
+}
+
 TEST(test_model_print_current) {
     pipe_open();
     CmdContext ctx = make_ctx();
@@ -294,6 +322,7 @@ TEST(test_compact_reduces_turns) {
     ASSERT_EQ(cmd_dispatch("/compact", &ctx), 0);
     /* 4 kept + 1 omission marker = 5 */
     ASSERT_EQ(conv->nturn, 5);
+    ASSERT_EQ(conv->cap, 5);
     const char *out = pipe_read_all();
     ASSERT_TRUE(strstr(out, "Compacted") != NULL);
 
@@ -404,6 +433,7 @@ int main(void)
     RUN_TEST(test_help_null_ctx);
 
     RUN_TEST(test_model_set);
+    RUN_TEST(test_model_set_persists_across_dispatches);
     RUN_TEST(test_model_print_current);
     RUN_TEST(test_model_no_ctx);
 

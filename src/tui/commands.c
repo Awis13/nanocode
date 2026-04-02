@@ -79,6 +79,21 @@ static int ifd(CmdContext *ctx)
     return ctx->fd_in;
 }
 
+/* Duplicate model text into arena when available, else heap. */
+static char *cmd_dup_model(CmdContext *ctx, const char *model)
+{
+    if (!model) return NULL;
+    size_t len = strlen(model) + 1;
+    char *dst = NULL;
+    if (ctx && ctx->conv && ctx->conv->arena)
+        dst = arena_alloc(ctx->conv->arena, len);
+    else
+        dst = malloc(len);
+    if (!dst) return NULL;
+    memcpy(dst, model, len);
+    return dst;
+}
+
 /* Write a NUL-terminated string to fd. */
 static void cmd_write(int fd, const char *s)
 {
@@ -169,7 +184,12 @@ static int cmd_model(int argc, const char **argv, CmdContext *ctx)
         cmd_write(fd, "error: model context unavailable\n");
         return 1;
     }
-    *ctx->model = (char *)argv[1];
+    char *model_copy = cmd_dup_model(ctx, argv[1]);
+    if (!model_copy) {
+        cmd_write(fd, "error: out of memory\n");
+        return 1;
+    }
+    *ctx->model = model_copy;
     char line[CMD_BUF];
     snprintf(line, sizeof(line), "Model set to: %s\n", argv[1]);
     cmd_write(fd, line);
@@ -223,7 +243,7 @@ static int cmd_compact(int argc, const char **argv, CmdContext *ctx)
         return 0;
     }
 
-    int   new_cap  = nsys + keep_body + 2; /* +1 marker, +1 spare */
+    int   new_cap  = nsys + keep_body + 1; /* +1 omission marker */
     Turn *new_turns = (Turn *)arena_alloc(conv->arena,
                                           (size_t)new_cap * sizeof(Turn));
     if (!new_turns) {

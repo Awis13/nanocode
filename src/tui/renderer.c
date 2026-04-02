@@ -17,6 +17,7 @@
 
 #include "tui/renderer.h"
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -53,6 +54,8 @@
 #define LINE_CAP      4096   /* one code-fence line              */
 #define LANG_CAP      32     /* fence language tag               */
 #define OUT_CAP       8192   /* output write-buffer              */
+#define FRAME_CAP     65536  /* frame accumulation buffer (64 KB) */
+#define FRAME_NS      16000000LL  /* 16 ms in nanoseconds */
 #define DEFAULT_WIDTH 80
 
 /* =========================================================================
@@ -104,17 +107,70 @@ struct Renderer {
     /* Outgoing write buffer */
     char       out[OUT_CAP];
     int        olen;
+
+    /* Write-batching frame state */
+    bool       frame_active;        /* inside renderer_frame_begin/end        */
+    int64_t    frame_deadline_ns;   /* auto-flush if clock passes this value  */
+    char       frame_buf[FRAME_CAP];/* accumulated output for current frame   */
+    int        frame_len;           /* bytes in frame_buf                     */
 };
 
 /* =========================================================================
  * Low-level I/O
  * ====================================================================== */
+
+static int64_t get_monotonic_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+/*
+ * Write bytes from `out` to fd — or, when inside a frame, accumulate them
+ * into the frame buffer for a single bulk write at renderer_frame_end().
+ *
+ * If the frame deadline has passed the data is written to fd immediately so
+ * the display never stalls longer than 16 ms regardless of how long the
+ * caller keeps the frame open.
+ */
 static void out_flush(Renderer *r)
 {
-    if (r->olen > 0) {
-        (void)write(r->fd, r->out, (size_t)r->olen);
+    if (r->olen == 0) return;
+
+    if (r->frame_active) {
+        /* Auto-flush if the 16 ms deadline has passed */
+        if (r->frame_deadline_ns > 0 &&
+            get_monotonic_ns() >= r->frame_deadline_ns) {
+            if (r->frame_len > 0) {
+                (void)write(r->fd, r->frame_buf, (size_t)r->frame_len);
+                r->frame_len = 0;
+            }
+            (void)write(r->fd, r->out, (size_t)r->olen);
+            r->olen              = 0;
+            r->frame_active      = false;
+            r->frame_deadline_ns = 0;
+            return;
+        }
+
+        /* Accumulate into frame buffer */
+        if (r->frame_len + r->olen <= FRAME_CAP) {
+            memcpy(r->frame_buf + r->frame_len, r->out, (size_t)r->olen);
+            r->frame_len += r->olen;
+        } else {
+            /* Frame buffer full — spill to fd to avoid stalling */
+            if (r->frame_len > 0) {
+                (void)write(r->fd, r->frame_buf, (size_t)r->frame_len);
+                r->frame_len = 0;
+            }
+            (void)write(r->fd, r->out, (size_t)r->olen);
+        }
         r->olen = 0;
+        return;
     }
+
+    (void)write(r->fd, r->out, (size_t)r->olen);
+    r->olen = 0;
 }
 
 static void out_raw(Renderer *r, const char *s, int n)
@@ -745,4 +801,59 @@ void renderer_free(Renderer *r)
 {
     out_flush(r);
     (void)r; /* arena-allocated; no individual free */
+}
+
+/*
+ * Begin a write-batching frame.  All writes issued via renderer_token() are
+ * accumulated in an internal 64 KB frame buffer instead of being written to
+ * the file descriptor directly.  The frame is automatically closed (and the
+ * buffer flushed to fd) if the 16 ms deadline expires before
+ * renderer_frame_end() is called, so the display never stalls.
+ *
+ * Calling renderer_frame_begin() while a frame is already active is a no-op
+ * (the deadline is not reset).
+ */
+void renderer_frame_begin(Renderer *r)
+{
+    if (r->frame_active) return;
+    r->frame_active      = true;
+    r->frame_len         = 0;
+    r->frame_deadline_ns = get_monotonic_ns() + FRAME_NS;
+}
+
+/*
+ * End the current write-batching frame and flush all accumulated output to fd
+ * in a single write syscall.  This is the "incremental line update" commit
+ * point: callers accumulate an entire rendered frame then issue one bulk
+ * write, minimising the number of partial-line updates visible on screen.
+ *
+ * Safe to call even when no frame is active (no-op).
+ */
+void renderer_frame_end(Renderer *r)
+{
+    if (!r->frame_active) return;
+
+    /* Drain the small out buffer into the frame buffer first */
+    if (r->olen > 0) {
+        if (r->frame_len + r->olen <= FRAME_CAP) {
+            memcpy(r->frame_buf + r->frame_len, r->out, (size_t)r->olen);
+            r->frame_len += r->olen;
+        } else {
+            if (r->frame_len > 0) {
+                (void)write(r->fd, r->frame_buf, (size_t)r->frame_len);
+                r->frame_len = 0;
+            }
+            (void)write(r->fd, r->out, (size_t)r->olen);
+        }
+        r->olen = 0;
+    }
+
+    /* Single bulk write for the entire frame */
+    if (r->frame_len > 0) {
+        (void)write(r->fd, r->frame_buf, (size_t)r->frame_len);
+        r->frame_len = 0;
+    }
+
+    r->frame_active      = false;
+    r->frame_deadline_ns = 0;
 }

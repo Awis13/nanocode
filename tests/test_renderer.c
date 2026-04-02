@@ -5,6 +5,7 @@
 #include "test.h"
 #include "tui/renderer.h"
 #include "util/arena.h"
+#include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
@@ -23,7 +24,7 @@ static int render_str(const char *text, char *out, int cap, int width)
     int fds[2];
     if (pipe(fds) != 0) return -1;
 
-    Arena *a = arena_new(64 * 1024);
+    Arena *a = arena_new(256 * 1024);
     Renderer *r = renderer_new(fds[1], a);
     if (width > 0) renderer_set_width(r, width);
 
@@ -50,7 +51,7 @@ static int render_streaming(const char *text, char *out, int cap, int width)
     int fds[2];
     if (pipe(fds) != 0) return -1;
 
-    Arena *a = arena_new(64 * 1024);
+    Arena *a = arena_new(256 * 1024);
     Renderer *r = renderer_new(fds[1], a);
     if (width > 0) renderer_set_width(r, width);
 
@@ -312,7 +313,7 @@ TEST(test_multiple_flush) {
     char out[512];
     int fds[2];
     ASSERT_TRUE(pipe(fds) == 0);
-    Arena *a = arena_new(64 * 1024);
+    Arena *a = arena_new(256 * 1024);
     Renderer *r = renderer_new(fds[1], a);
     renderer_token(r, "hello\n", 6);
     renderer_flush(r);
@@ -334,6 +335,105 @@ TEST(test_crlf_stripped) {
     render_str("line one\r\nline two\r\n", out, sizeof(out), -1);
     ASSERT_TRUE(strstr(out, "line one") != NULL);
     ASSERT_TRUE(strstr(out, "line two") != NULL);
+}
+
+/* =========================================================================
+ * Write-batching frame API
+ * ====================================================================== */
+
+/*
+ * Verify that output fed inside a frame does NOT reach the fd until
+ * renderer_frame_end() is called.
+ */
+TEST(test_frame_batches_output) {
+    int fds[2];
+    ASSERT_TRUE(pipe(fds) == 0);
+    Arena *a = arena_new(256 * 1024);
+    Renderer *r = renderer_new(fds[1], a);
+    renderer_set_width(r, 80);
+
+    renderer_frame_begin(r);
+    renderer_token(r, "hello frame\n", 12);
+
+    /* Set pipe non-blocking — read must return EAGAIN (nothing written yet) */
+    int fl = fcntl(fds[0], F_GETFL);
+    fcntl(fds[0], F_SETFL, fl | O_NONBLOCK);
+    char peek[64];
+    int peeked = (int)read(fds[0], peek, sizeof(peek));
+    fcntl(fds[0], F_SETFL, fl); /* restore blocking */
+    ASSERT_TRUE(peeked <= 0);
+
+    /* Commit the frame — now data must be available */
+    renderer_frame_end(r);
+
+    char out[512];
+    int n = (int)read(fds[0], out, sizeof(out) - 1);
+    close(fds[0]);
+    close(fds[1]);
+    arena_free(a);
+
+    ASSERT_TRUE(n > 0);
+    out[n] = '\0';
+    ASSERT_TRUE(strstr(out, "hello frame") != NULL);
+}
+
+/*
+ * Framed output must be byte-identical to non-framed output.
+ * Also verifies that double renderer_frame_begin() is a no-op.
+ */
+TEST(test_frame_output_identical) {
+    char out_plain[512], out_framed[512];
+    int n_plain = render_str("**framed bold**\n", out_plain,
+                             sizeof(out_plain), 80);
+    ASSERT_TRUE(n_plain > 0);
+
+    int fds[2];
+    ASSERT_TRUE(pipe(fds) == 0);
+    Arena *a = arena_new(256 * 1024);
+    Renderer *r = renderer_new(fds[1], a);
+    renderer_set_width(r, 80);
+
+    renderer_frame_begin(r);
+    renderer_frame_begin(r); /* double-begin is a no-op */
+    renderer_token(r, "**framed bold**\n", 16);
+    renderer_flush(r);
+    renderer_frame_end(r);
+
+    close(fds[1]);
+    int n_framed = (int)read(fds[0], out_framed, sizeof(out_framed) - 1);
+    close(fds[0]);
+    arena_free(a);
+
+    ASSERT_TRUE(n_framed > 0);
+    out_framed[n_framed] = '\0';
+    ASSERT_TRUE(strstr(out_framed, "framed bold") != NULL);
+    ASSERT_EQ(n_plain, n_framed);
+}
+
+/*
+ * renderer_frame_end() with no active frame must not crash or corrupt state.
+ */
+TEST(test_frame_end_no_op_without_begin) {
+    int fds[2];
+    ASSERT_TRUE(pipe(fds) == 0);
+    Arena *a = arena_new(256 * 1024);
+    Renderer *r = renderer_new(fds[1], a);
+    renderer_set_width(r, 80);
+
+    renderer_frame_end(r); /* no active frame — must be a no-op */
+    renderer_token(r, "safe\n", 5);
+    renderer_flush(r);
+    renderer_free(r);
+    close(fds[1]);
+
+    char out[512];
+    int n = (int)read(fds[0], out, sizeof(out) - 1);
+    close(fds[0]);
+    arena_free(a);
+
+    ASSERT_TRUE(n > 0);
+    out[n] = '\0';
+    ASSERT_TRUE(strstr(out, "safe") != NULL);
 }
 
 /* =========================================================================
@@ -368,6 +468,9 @@ int main(void)
     RUN_TEST(test_empty_input);
     RUN_TEST(test_multiple_flush);
     RUN_TEST(test_crlf_stripped);
+    RUN_TEST(test_frame_batches_output);
+    RUN_TEST(test_frame_output_identical);
+    RUN_TEST(test_frame_end_no_op_without_begin);
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;
 }

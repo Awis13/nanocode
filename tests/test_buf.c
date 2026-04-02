@@ -145,6 +145,51 @@ TEST(test_buf_append_zero_len) {
     buf_destroy(&b);
 }
 
+TEST(test_buf_reserve_sets_capacity) {
+    Buf b;
+    buf_init(&b);
+
+    int r = buf_reserve(&b, 1024);
+    ASSERT_EQ(r, 0);
+    ASSERT_TRUE(b.cap >= 1024);
+    ASSERT_EQ(b.len, 0); /* len must not change */
+
+    buf_destroy(&b);
+}
+
+TEST(test_buf_reserve_noop_when_sufficient) {
+    Buf b;
+    buf_init(&b);
+
+    buf_reserve(&b, 2048);
+    size_t cap_after_first = b.cap;
+
+    int r = buf_reserve(&b, 512); /* smaller than current cap */
+    ASSERT_EQ(r, 0);
+    ASSERT_EQ(b.cap, cap_after_first); /* cap must not shrink */
+    ASSERT_EQ(b.len, 0);
+
+    buf_destroy(&b);
+}
+
+TEST(test_buf_reserve_no_realloc_on_append) {
+    Buf b;
+    buf_init(&b);
+
+    /* Reserve exactly 100 bytes then append 100 bytes — must not realloc. */
+    buf_reserve(&b, 100);
+    void *ptr_before = b.data;
+
+    char data[100];
+    memset(data, 'a', sizeof(data));
+    int r = buf_append(&b, data, sizeof(data));
+    ASSERT_EQ(r, 0);
+    ASSERT_EQ(b.len, 100);
+    ASSERT_EQ(b.data, ptr_before); /* same allocation */
+
+    buf_destroy(&b);
+}
+
 TEST(test_buf_binary_data) {
     Buf b;
     buf_init(&b);
@@ -174,6 +219,9 @@ int main(void)
     RUN_TEST(test_buf_grow_across_initial_cap);
     RUN_TEST(test_buf_append_zero_len);
     RUN_TEST(test_buf_binary_data);
+    RUN_TEST(test_buf_reserve_sets_capacity);
+    RUN_TEST(test_buf_reserve_noop_when_sufficient);
+    RUN_TEST(test_buf_reserve_no_realloc_on_append);
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;
 }

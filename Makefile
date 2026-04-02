@@ -45,7 +45,12 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
              tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
              tests/test_oom tests/test_retry tests/test_conversation \
-             tests/test_audit
+             tests/test_audit \
+             tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
+             tests/test_config tests/test_mcp tests/test_tool_display \
+             tests/test_session tests/test_loop tests/test_memory \
+             tests/test_tool_protocol \
+             tests/test_sandbox
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -104,6 +109,67 @@ tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
 tests/test_audit: tests/test_audit.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
+# CMP-121: system prompt builder
+tests/test_prompt: tests/test_prompt.c src/agent/prompt.c src/agent/git.c \
+                   src/tools/executor.c src/tools/memory.c src/util/arena.c \
+                   src/util/buf.c src/util/json.c \
+                   src/core/sandbox.c src/core/config.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-126: input system — line editor, history, tab completion
+tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-147: repo map — symbol extraction, context injection
+tests/test_repomap: tests/test_repomap.c src/agent/repomap.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-148: git integration — repo detection, status, tools
+tests/test_git: tests/test_git.c src/agent/git.c src/tools/executor.c \
+                src/util/arena.c src/util/buf.c src/util/json.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-141: config system — TOML parser, provider config
+tests/test_config: tests/test_config.c src/core/config.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-150: MCP client — JSON-RPC 2.0, tool discovery, config
+tests/test_mcp: tests/test_mcp.c src/agent/mcp.c src/tools/executor.c \
+                src/util/arena.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-124: tool output display — invocation header, result truncation, diff colouring
+tests/test_tool_display: tests/test_tool_display.c src/tui/tool_display.c \
+                         src/tools/executor.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-183: session event log — bounded NDJSON with rotation
+tests/test_session: tests/test_session.c src/core/session.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-180: event loop fd lookup optimization — O(1) bitmap-indexed sparse array
+tests/test_loop: tests/test_loop.c src/core/loop.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-153: cross-session memory — memory_write tool and memory_load
+tests/test_memory: tests/test_memory.c src/tools/memory.c src/tools/executor.c \
+                   src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-119: tool use protocol — parse + dispatch tool calls, schema payload
+tests/test_tool_protocol: tests/test_tool_protocol.c \
+                           src/agent/tool_protocol.c \
+                           src/agent/conversation.c \
+                           src/tools/executor.c \
+                           src/util/arena.c \
+                           src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-200: OS-level sandbox enforcement — macOS SBPL + Linux Landlock
+tests/test_sandbox: tests/test_sandbox.c src/core/sandbox.c \
+                    src/core/config.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -DSANDBOX_TEST -o $@ $^
+
 .PHONY: all clean install test asan bearssl unit-test
 
 all: bearssl $(BIN)
@@ -128,6 +194,8 @@ TEST_STREAM_SRCS := bin/test_stream.c  \
                     src/util/buf.c     \
                     src/util/json.c    \
                     src/api/client.c   \
+                    src/api/retry.c    \
+                    src/api/tls_ca.c   \
                     src/api/sse.c      \
                     src/api/provider.c
 
@@ -143,7 +211,8 @@ test_stream: bearssl $(TEST_STREAM_SRCS)
 
 clean:
 	rm -f $(OBJS) $(BIN) test_stream $(TEST_BINS) \
-	      tests/test_grep tests/test_grep_asan
+	      tests/test_grep tests/test_grep_asan \
+	      tests/test_pipe tests/test_subagent
 
 install: $(BIN)
 	install -d $(DESTDIR)/bin

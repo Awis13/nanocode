@@ -15,6 +15,16 @@
 #define LOOP_READ   (1 << 0)
 #define LOOP_WRITE  (1 << 1)
 
+/*
+ * Loop mode controls the timeout used in loop_run().
+ *  LOOP_IDLE      — 100 ms timeout (default; conserves CPU when quiet)
+ *  LOOP_STREAMING — 16 ms timeout (~60 FPS; low-latency during SSE streams)
+ */
+typedef enum {
+    LOOP_IDLE      = 0,
+    LOOP_STREAMING = 1
+} LoopMode;
+
 typedef struct Loop Loop;
 
 /*
@@ -63,7 +73,35 @@ void  loop_run(Loop *l);
 /* Signal the loop to exit after the current iteration. */
 void  loop_stop(Loop *l);
 
+/*
+ * Set the loop's dispatch mode.  Takes effect on the next loop_run() iteration.
+ *  LOOP_IDLE      — 100 ms poll timeout (default)
+ *  LOOP_STREAMING — 16 ms poll timeout (~60 FPS, during active SSE streaming)
+ */
+void  loop_set_mode(Loop *l, LoopMode mode);
+
 /* Make `fd` non-blocking. Returns 0 on success, -1 on error. */
 int   fd_set_nonblocking(int fd);
+
+/*
+ * Schedule a one-shot callback after `delay_ms` milliseconds.
+ *
+ * When the timer fires, cb(timer_id, 0, ctx) is called.  The timer is
+ * automatically removed from the loop after it fires (one-shot).
+ *
+ * On Linux the returned identifier is a timerfd file descriptor.
+ * On macOS it is a synthetic integer identifier (not an fd).
+ * Callers should treat it as an opaque handle and only pass it to
+ * loop_cancel_timer().
+ *
+ * Returns a timer identifier (> 0) on success, -1 on error.
+ */
+int   loop_add_timer(Loop *l, int delay_ms, loop_cb cb, void *ctx);
+
+/*
+ * Cancel a pending timer.  Safe to call if the timer has already fired.
+ * `timer_id` must be a value returned by loop_add_timer().
+ */
+void  loop_cancel_timer(Loop *l, int timer_id);
 
 #endif /* LOOP_H */

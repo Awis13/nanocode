@@ -14,6 +14,15 @@
 void fileops_register_all(void);
 
 /*
+ * Configure per-session resource limits.  Call once from main() after
+ * config is loaded.  Resets the session file counter to zero.
+ *
+ *   max_file_size_bytes  — maximum bytes per write/edit (0 = unlimited)
+ *   max_files_created    — maximum new files per session (0 = unlimited)
+ */
+void fileops_set_limits(long max_file_size_bytes, int max_files_created);
+
+/*
  * Individual tool handlers — exported so tests can invoke them directly
  * without going through the registry.
  *

@@ -15,6 +15,20 @@
 /* Hard cap on number of registered tools. */
 #define TOOL_REGISTRY_MAX 64
 
+/*
+ * Execution mode — controls which tools are permitted to run.
+ * EXEC_MODE_NORMAL : all registered tools may be invoked.
+ * EXEC_MODE_PLAN   : write/execute tools (bash, write_file, edit_file) are
+ *                    blocked; the model may only read and reason.
+ */
+typedef enum {
+    EXEC_MODE_NORMAL = 0,
+    EXEC_MODE_PLAN   = 1
+} ExecMode;
+
+void     executor_set_mode(ExecMode mode);
+ExecMode executor_get_mode(void);
+
 /* Result returned by every tool handler and by tool_invoke(). */
 typedef struct {
     int     error;    /* 0 = success, non-zero = failure */
@@ -57,6 +71,38 @@ void executor_set_audit(AuditLog *log, const char *session_id,
  * Reset the registry — useful in tests to start from a clean state.
  */
 void tool_registry_reset(void);
+
+/*
+ * Register the tool_search meta-tool.
+ * Call once at startup (after all other tools are registered) so the model
+ * can request full schemas on demand.  tool_search itself always carries its
+ * full schema and is excluded from the name-stub list returned by
+ * tool_names_json().
+ */
+void tool_search_register(void);
+
+/*
+ * Return a JSON array of name-only stubs for every registered tool except
+ * tool_search itself:
+ *   [{"name":"bash"},{"name":"grep"},...]
+ * Arena-allocated NUL-terminated string.  Returns NULL on allocation failure.
+ */
+char *tool_names_json(Arena *arena);
+
+/*
+ * Return the full tool-schemas JSON array for every registered tool
+ * (including tool_search):
+ *   [<schema1>,<schema2>,...]
+ * Arena-allocated NUL-terminated string.  Returns NULL on allocation failure.
+ */
+char *tool_schemas_json(Arena *arena);
+
+/*
+ * Fill `names` with pointers to the names of registered tools (up to max_names).
+ * Returns the total number of registered tools (may exceed max_names).
+ * Pointers are into static storage — do not free.
+ */
+int tool_list_names(const char **names, int max_names);
 
 /*
  * Serialize a ToolResult into a Claude-compatible tool_result block:

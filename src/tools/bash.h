@@ -21,4 +21,17 @@
  */
 void bash_tool_register(void);
 
+/*
+ * Configure command allow/deny filters.  Call once from main() after
+ * config is loaded.
+ *
+ *   allowed_colon_sep  — colon-separated basenames that may run ("" = any)
+ *   denied_colon_sep   — colon-separated basenames that are always blocked
+ *
+ * Denylist is checked first; allowlist is checked second.
+ * Empty string means "no restriction for that list."
+ */
+void bash_set_cmd_filter(const char *allowed_colon_sep,
+                         const char *denied_colon_sep);
+
 #endif /* BASH_H */

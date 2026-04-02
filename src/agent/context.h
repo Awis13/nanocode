@@ -54,4 +54,42 @@ int ctx_conversation_tokens(const Conversation *conv);
  */
 void ctx_truncate(Conversation *conv, int max_tokens, Arena *arena);
 
+/* Compaction threshold — compact when tokens exceed this fraction of max. */
+#define CTX_COMPACT_THRESHOLD 0.95f
+
+/*
+ * Callback type for Phase 2 summarization.
+ * Receives the prompt string and must write an arena-allocated summary to *out.
+ * Returns 0 on success, non-zero on failure.
+ */
+typedef int (*ctx_compact_fn)(
+    const char *prompt,
+    char      **out,
+    Arena      *arena,
+    void       *userdata
+);
+
+/*
+ * Compact conv to bring token usage under compact_threshold * max_tokens.
+ *
+ * Phase 1: replaces content of is_tool turns in the eligible range
+ *          (after system turns, before last CTX_KEEP_LAST_TURNS) with
+ *          "[tool output cleared]". Re-measures; returns 1 if now under
+ *          threshold.
+ *
+ * Phase 2: if still over threshold and compact_fn != NULL, builds a
+ *          summarization prompt from the eligible range (one "role: content"
+ *          line per turn), calls compact_fn, and replaces the entire
+ *          eligible range with a single user turn:
+ *          "[Context summary: <output>]". Returns 1.
+ *
+ * If compact_fn is NULL, Phase 2 is skipped; caller falls back to
+ * ctx_truncate. Returns 1 if Phase 1 ran.
+ *
+ * Returns 0 if tokens <= compact_threshold * max_tokens (no action needed).
+ * All allocations use arena.
+ */
+int ctx_compact(Conversation *conv, int max_tokens, float compact_threshold,
+                ctx_compact_fn compact_fn, void *fn_userdata, Arena *arena);
+
 #endif /* CONTEXT_H */

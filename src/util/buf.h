@@ -19,6 +19,11 @@ typedef struct {
 /* Initialize an empty buffer (no allocation yet). */
 void   buf_init(Buf *b);
 
+/* Pre-allocate at least `capacity` bytes of storage without changing len.
+ * Avoids realloc chains when the total size is known upfront (e.g. Content-Length).
+ * Returns 0 on success, -1 on OOM. */
+int    buf_reserve(Buf *b, size_t capacity);
+
 /* Append `len` bytes from `data` to the buffer. Returns 0 on success, -1 on OOM. */
 int    buf_append(Buf *b, const char *data, size_t len);
 

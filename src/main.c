@@ -14,6 +14,7 @@
 
 #include "../include/config.h"
 #include "../include/editor.h"
+#include "../include/json_output.h"
 #include "../include/sandbox.h"
 #include "../include/status_file.h"
 #include "../include/daemon.h"
@@ -42,6 +43,14 @@ static int session_timeout_cb(int timer_id, int events, void *ctx)
     return -1;  /* removes the timer */
 }
 
+/* Stub dispatch — placeholder until agent wiring is complete. */
+static const char *daemon_dispatch_stub(const char *prompt, const char *cwd,
+                                         void *ctx)
+{
+    (void)prompt; (void)cwd; (void)ctx;
+    return "ok";
+}
+
 int main(int argc, char **argv)
 {
     signal(SIGINT, handle_signal);
@@ -65,15 +74,37 @@ int main(int argc, char **argv)
     /* -----------------------------------------------------------------------
      * Phase 1: Parse CLI flags that must be applied before / after config.
      *
+     * --json                     emit a single JSON object on stdout and exit
      * --sandbox                  force sandbox.enabled = true
      * --sandbox-profile <name>   override sandbox.profile
      * --timeout <duration>       session timeout (e.g. 30m, 1h, 90s)
      * --daemon                   run as Unix socket daemon
      * -------------------------------------------------------------------- */
+    int         cli_json            = 0;
     int         cli_sandbox         = 0;
     int         cli_daemon          = 0;
     const char *cli_sandbox_profile = NULL;
     char        cli_timeout_arg[64] = "";
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0) { cli_json = 1; break; }
+    }
+    if (!cli_json && !isatty(STDOUT_FILENO)) {
+        const char *env = getenv("NANOCODE_JSON");
+        if (env && strcmp(env, "1") == 0) cli_json = 1;
+    }
+
+    /* Short-circuit: JSON mode emits the envelope and exits without TUI. */
+    if (cli_json) {
+        JsonOutput jout;
+        json_output_init(&jout);
+        jout.status      = "done";
+        jout.result      = "nanocode json mode active (stub)";
+        jout.duration_ms = 0;
+        json_output_print(&jout);
+        json_output_free(&jout);
+        return NC_EXIT_OK;
+    }
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--daemon") == 0) {

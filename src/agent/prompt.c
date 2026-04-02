@@ -15,6 +15,7 @@
 #include "../tools/executor.h"
 #include "../tools/memory.h"
 #include "../util/buf.h"
+#include "../../include/sandbox.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,7 +74,8 @@ static char *read_file_heap(const char *path)
  * prompt_build
  * ---------------------------------------------------------------------- */
 
-char *prompt_build(Arena *arena, const char *cwd, void *exec)
+char *prompt_build(Arena *arena, const char *cwd, void *exec,
+                   const SandboxConfig *sc)
 {
     (void)exec; /* reserved — tools come from the global registry */
 
@@ -210,6 +212,19 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec)
     buf_append_str(&b, "## Working Directory\n");
     buf_append_str(&b, cwd);
     buf_append_str(&b, "\n");
+
+    /* ------------------------------------------------------------------
+     * 7. Sandbox policy block (only when sandbox is active)
+     * ------------------------------------------------------------------ */
+    if (sc && sc->enabled) {
+        char sbox[512];
+        sandbox_build_prompt_block(sc, sbox, sizeof(sbox));
+        if (sbox[0] != '\0') {
+            buf_append_str(&b, "\n");
+            buf_append_str(&b, sbox);
+            buf_append_str(&b, "\n");
+        }
+    }
 
     /* ------------------------------------------------------------------
      * Copy result to arena

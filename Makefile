@@ -105,7 +105,8 @@ tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
 # CMP-121: system prompt builder
 tests/test_prompt: tests/test_prompt.c src/agent/prompt.c src/agent/git.c \
                    src/tools/executor.c src/tools/memory.c src/util/arena.c \
-                   src/util/buf.c src/util/json.c
+                   src/util/buf.c src/util/json.c \
+                   src/core/sandbox.c src/core/config.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-126: input system — line editor, history, tab completion

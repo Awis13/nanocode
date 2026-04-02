@@ -14,6 +14,7 @@
 #include "../src/agent/prompt.h"
 #include "../src/tools/executor.h"
 #include "../src/util/arena.h"
+#include "../include/sandbox.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,7 +60,7 @@ static ToolResult dummy_handler(Arena *arena, const char *args_json)
 TEST(test_prompt_null_arena)
 {
     /* Must return NULL, not crash. */
-    char *p = prompt_build(NULL, "/tmp", NULL);
+    char *p = prompt_build(NULL, "/tmp", NULL, NULL);
     ASSERT_NULL(p);
 }
 
@@ -68,7 +69,7 @@ TEST(test_prompt_null_cwd)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, NULL, NULL);
+    char *p = prompt_build(a, NULL, NULL, NULL);
     ASSERT_NULL(p);
 
     arena_free(a);
@@ -83,7 +84,7 @@ TEST(test_prompt_contains_nanocode)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "nanocode"));
 
@@ -107,7 +108,7 @@ TEST(test_prompt_detects_makefile)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL);
     ASSERT_NOT_NULL(p);
 
     /* Must mention C project. */
@@ -127,7 +128,7 @@ TEST(test_prompt_no_project_file)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "Detected:"));
 
@@ -152,7 +153,7 @@ TEST(test_prompt_injects_claude_md)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL);
     ASSERT_NOT_NULL(p);
 
     ASSERT_NOT_NULL(strstr(p, "Always write tests."));
@@ -175,7 +176,7 @@ TEST(test_prompt_injects_nanocode_md)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "Custom nanocode config."));
 
@@ -199,7 +200,7 @@ TEST(test_prompt_claude_md_takes_priority)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "from-claude-md"));
     ASSERT_NULL(strstr(p, "from-nanocode-md"));
@@ -219,7 +220,7 @@ TEST(test_prompt_no_config_file)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "Project Instructions"));
 
@@ -244,7 +245,7 @@ TEST(test_prompt_git_status_in_repo)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, ".", NULL);
+    char *p = prompt_build(a, ".", NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_TRUE(strlen(p) > 0);
 
@@ -257,7 +258,7 @@ TEST(test_prompt_graceful_not_in_git)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
     ASSERT_NOT_NULL(p); /* still returns a valid prompt */
 
     /* Git sections must be absent. */
@@ -281,7 +282,7 @@ TEST(test_prompt_lists_tools)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
     ASSERT_NOT_NULL(p);
 
     ASSERT_NOT_NULL(strstr(p, "bash"));
@@ -299,7 +300,7 @@ TEST(test_prompt_no_tools_section_when_empty)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "Available Tools"));
 
@@ -315,9 +316,66 @@ TEST(test_prompt_contains_cwd)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp/some/project", NULL);
+    char *p = prompt_build(a, "/tmp/some/project", NULL, NULL);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "/tmp/some/project"));
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * Sandbox policy block injection
+ * ---------------------------------------------------------------------- */
+
+TEST(test_prompt_sandbox_block_injected_when_enabled)
+{
+    SandboxConfig sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.enabled          = 1;
+    sc.profile          = "strict";
+    sc.allowed_paths    = "/tmp:/home/user";
+    sc.allowed_commands = "ls:cat";
+    sc.network          = 0;
+    sc.max_file_size    = 1048576;
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *p = prompt_build(a, "/tmp", NULL, &sc);
+    ASSERT_NOT_NULL(p);
+
+    ASSERT_NOT_NULL(strstr(p, "<sandbox_policy>"));
+    ASSERT_NOT_NULL(strstr(p, "strict"));
+    ASSERT_NOT_NULL(strstr(p, "/tmp"));
+
+    arena_free(a);
+}
+
+TEST(test_prompt_sandbox_block_absent_when_disabled)
+{
+    SandboxConfig sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.enabled = 0;
+    sc.profile = "strict";
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *p = prompt_build(a, "/tmp", NULL, &sc);
+    ASSERT_NOT_NULL(p);
+    ASSERT_NULL(strstr(p, "<sandbox_policy>"));
+
+    arena_free(a);
+}
+
+TEST(test_prompt_sandbox_null_sc_no_block)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_NULL(strstr(p, "<sandbox_policy>"));
 
     arena_free(a);
 }
@@ -349,6 +407,10 @@ int main(void)
     RUN_TEST(test_prompt_no_tools_section_when_empty);
 
     RUN_TEST(test_prompt_contains_cwd);
+
+    RUN_TEST(test_prompt_sandbox_block_injected_when_enabled);
+    RUN_TEST(test_prompt_sandbox_block_absent_when_disabled);
+    RUN_TEST(test_prompt_sandbox_null_sc_no_block);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

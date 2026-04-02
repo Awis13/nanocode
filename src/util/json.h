@@ -64,4 +64,13 @@ int json_get_array_item_nested_str(const JsonCtx *ctx, const char *json,
                                    const char *obj_key, const char *field,
                                    char *out_buf, size_t out_cap);
 
+/*
+ * Write a JSON-escaped, double-quoted string into buf[pos..cap-1].
+ * NULL src emits the JSON literal null (without quotes).
+ * Returns updated pos (may exceed cap on overflow; actual writes stay in
+ * bounds). Pattern matches the (buf, cap, pos) idiom used in daemon.c and
+ * status_file.c — centralises the three previously divergent serialisers.
+ */
+size_t json_escape_str(char *buf, size_t cap, size_t pos, const char *s);
+
 #endif /* JSON_H */

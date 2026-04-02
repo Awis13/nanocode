@@ -7,6 +7,7 @@
  */
 
 #include "daemon.h"
+#include "../util/json.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +17,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 /* Maximum concurrent client connections. */
@@ -83,39 +85,6 @@ static int simple_json_get_str(const char *json, size_t len,
         p++; /* skip past this '"' */
     }
     return -1;
-}
-
-/*
- * Write `s` into buf+pos with JSON string escaping (double-quote wrapped).
- * Returns updated pos. s may be NULL (emits "").
- */
-static size_t resp_append_str(char *buf, size_t cap, size_t pos, const char *s)
-{
-    if (pos < cap) buf[pos] = '"'; pos++;
-    if (!s) { if (pos < cap) buf[pos] = '"'; return pos + 1; }
-    for (const char *p = s; *p; p++) {
-        unsigned char c = (unsigned char)*p;
-        if (c == '"' || c == '\\') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = (char)c; }
-            pos += 2;
-        } else if (c == '\n') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = 'n'; }
-            pos += 2;
-        } else if (c == '\r') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = 'r'; }
-            pos += 2;
-        } else if (c == '\t') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = 't'; }
-            pos += 2;
-        } else if (c < 0x20) {
-            /* skip control chars */
-        } else {
-            if (pos < cap) buf[pos] = (char)c;
-            pos++;
-        }
-    }
-    if (pos < cap) buf[pos] = '"'; pos++;
-    return pos;
 }
 
 /* -------------------------------------------------------------------------
@@ -266,8 +235,9 @@ static void conn_handle(ConnEntry *c)
         }
     }
 
-    /* Build response: {"status":"...","result":"..."}\n */
-    char resp[8192];
+    /* Build response: {"status":"...","result":"..."}\n
+     * 64 KB buffer reduces silent truncation risk for large dispatch results. */
+    char resp[65536];
     size_t cap = sizeof(resp);
     size_t pos = 0;
 
@@ -275,20 +245,30 @@ static void conn_handle(ConnEntry *c)
     const char *sk = "\"status\":";
     size_t sklen = strlen(sk);
     if (pos + sklen < cap) { memcpy(resp + pos, sk, sklen); pos += sklen; }
-    pos = resp_append_str(resp, cap, pos, status);
+    pos = json_escape_str(resp, cap, pos, status);
     if (pos < cap) resp[pos++] = ',';
     const char *rk = "\"result\":";
     size_t rklen = strlen(rk);
     if (pos + rklen < cap) { memcpy(resp + pos, rk, rklen); pos += rklen; }
-    pos = resp_append_str(resp, cap, pos, result);
+    pos = json_escape_str(resp, cap, pos, result);
     if (pos < cap) resp[pos++] = '}';
     if (pos < cap) resp[pos++] = '\n';
     if (pos < cap) resp[pos]   = '\0'; else resp[cap-1] = '\0';
 
-    /* Write response (best-effort; ignore partial write). */
+    /* Guard: if pos exceeded the buffer the JSON is truncated and invalid.
+     * Replace with a safe error envelope instead of sending corrupt JSON. */
+    if (pos >= cap) {
+        static const char trunc_resp[] =
+            "{\"status\":\"error\",\"result\":\"response truncated\"}\n";
+        pos = sizeof(trunc_resp) - 1;
+        memcpy(resp, trunc_resp, pos);
+    }
+
+    /* Clamp send length to actual bytes written (pos is guaranteed < cap now). */
+    size_t send_len = pos;
     size_t written = 0;
-    while (written < pos) {
-        ssize_t w = write(c->fd, resp + written, pos - written);
+    while (written < send_len) {
+        ssize_t w = write(c->fd, resp + written, send_len - written);
         if (w <= 0) break;
         written += (size_t)w;
     }
@@ -347,6 +327,10 @@ Daemon *daemon_start(Loop *loop, const char *sock_path,
         close(lfd);
         return NULL;
     }
+
+    /* Restrict socket to owner only — prevents other users from connecting. */
+    if (chmod(sock_path, 0600) < 0)
+        perror("daemon: chmod");
 
     if (listen(lfd, 8) < 0) {
         perror("daemon: listen");

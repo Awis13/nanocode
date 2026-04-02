@@ -6,6 +6,7 @@
  */
 
 #include "status_file.h"
+#include "../util/json.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -14,54 +15,6 @@
 /* Maximum length of the tmp path suffix ".tmp" */
 #define TMP_SUFFIX      ".tmp"
 #define TMP_SUFFIX_LEN  4
-
-/*
- * Write a JSON string value with basic escaping into buf[pos..cap-1].
- * Handles NUL src (emits JSON null without quotes).
- * Returns updated pos.
- */
-static size_t write_json_str(char *buf, size_t cap, size_t pos, const char *s)
-{
-    if (!s) {
-        /* null literal */
-        if (pos + 4 < cap) {
-            buf[pos]     = 'n';
-            buf[pos + 1] = 'u';
-            buf[pos + 2] = 'l';
-            buf[pos + 3] = 'l';
-        }
-        return pos + 4;
-    }
-
-    if (pos < cap) buf[pos] = '"';
-    pos++;
-
-    for (const char *p = s; *p; p++) {
-        unsigned char c = (unsigned char)*p;
-        if (c == '"' || c == '\\') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos + 1] = (char)c; }
-            pos += 2;
-        } else if (c == '\n') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos + 1] = 'n'; }
-            pos += 2;
-        } else if (c == '\r') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos + 1] = 'r'; }
-            pos += 2;
-        } else if (c == '\t') {
-            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos + 1] = 't'; }
-            pos += 2;
-        } else if (c < 0x20) {
-            /* control char — skip */
-        } else {
-            if (pos + 1 <= cap) buf[pos] = (char)c;
-            pos++;
-        }
-    }
-
-    if (pos < cap) buf[pos] = '"';
-    pos++;
-    return pos;
-}
 
 void status_file_write(const char *path, const StatusInfo *info)
 {
@@ -89,25 +42,25 @@ void status_file_write(const char *path, const StatusInfo *info)
     /* "state": ... */
     if (pos + 9 < cap) { memcpy(buf + pos, "\"state\":", 8); }
     pos += 8;
-    pos = write_json_str(buf, cap, pos, info->state);
+    pos = json_escape_str(buf, cap, pos, info->state);
     if (pos < cap) buf[pos] = ','; pos++;
 
     /* "task": ... */
     if (pos + 8 < cap) { memcpy(buf + pos, "\"task\":", 7); }
     pos += 7;
-    pos = write_json_str(buf, cap, pos, info->task);
+    pos = json_escape_str(buf, cap, pos, info->task);
     if (pos < cap) buf[pos] = ','; pos++;
 
     /* "started_at": ... */
     if (pos + 14 < cap) { memcpy(buf + pos, "\"started_at\":", 13); }
     pos += 13;
-    pos = write_json_str(buf, cap, pos, info->started_at);
+    pos = json_escape_str(buf, cap, pos, info->started_at);
     if (pos < cap) buf[pos] = ','; pos++;
 
     /* "last_action": ... */
     if (pos + 15 < cap) { memcpy(buf + pos, "\"last_action\":", 14); }
     pos += 14;
-    pos = write_json_str(buf, cap, pos, info->last_action);
+    pos = json_escape_str(buf, cap, pos, info->last_action);
     if (pos < cap) buf[pos] = ','; pos++;
 
     /* "tool_calls": <N> */

@@ -37,20 +37,20 @@ TEST(test_sandbox_denied_returns_minus1) {
 }
 
 TEST(test_sandbox_allowed_proceeds) {
-    /* Path inside the allowed list.  We use /nonexistent so the exec fails
-     * (editor exits non-zero), but sandbox check must pass (rc != sandbox
-     * denial).  We distinguish sandbox denial from exec failure by checking
-     * that the function at least attempted the fork — but since /nonexistent
-     * doesn't exist, the exec will fail and we get rc == -1 for a different
-     * reason.  This test just verifies we don't get an immediate -1 from
-     * the sandbox check before fork; the editor binary itself won't be
-     * found.  What we really test: no early return before fork attempt. */
+    /* Path inside the allowed list.
+     * Use realpath to resolve /tmp to its canonical form (on macOS /tmp ->
+     * /private/tmp) so the allowed-path prefix match works after editor.c's
+     * own realpath() call. */
+    char real_tmp[4096];
+    if (!realpath("/tmp", real_tmp)) {
+        /* realpath failed — skip this test rather than false-fail */
+        return;
+    }
 
     /* Use a real editor that exits quickly: true(1) always exits 0. */
     setenv("VISUAL", "true", 1);
-    int rc = editor_open("/tmp", 0, "/tmp:/home");
+    int rc = editor_open("/tmp", 0, real_tmp);
     unsetenv("VISUAL");
-    /* "true" ignores its arguments and exits 0 — expect success. */
     ASSERT_EQ(rc, 0);
 }
 

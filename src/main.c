@@ -18,6 +18,7 @@
 #include "../include/sandbox.h"
 #include "../include/status_file.h"
 #include "../include/daemon.h"
+#include "../src/api/provider.h"
 #include "../src/core/loop.h"
 #include "../src/util/arena.h"
 #include "../src/util/duration.h"
@@ -89,28 +90,11 @@ int main(int argc, char **argv)
     const char *cli_sandbox_profile = NULL;
     char        cli_timeout_arg[64] = "";
 
+    /* Single-pass flag parse so all flags are known before env-based autodetect. */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--json") == 0) { cli_json = 1; break; }
-    }
-    if (!cli_json && !isatty(STDOUT_FILENO)) {
-        const char *env = getenv("NANOCODE_JSON");
-        if (env && strcmp(env, "1") == 0) cli_json = 1;
-    }
-
-    /* Short-circuit: JSON mode emits the envelope and exits without TUI. */
-    if (cli_json) {
-        JsonOutput jout;
-        json_output_init(&jout);
-        jout.status      = "done";
-        jout.result      = "nanocode json mode active (stub)";
-        jout.duration_ms = 0;
-        json_output_print(&jout);
-        json_output_free(&jout);
-        return NC_EXIT_OK;
-    }
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--daemon") == 0) {
+        if (strcmp(argv[i], "--json") == 0) {
+            cli_json = 1;
+        } else if (strcmp(argv[i], "--daemon") == 0) {
             cli_daemon = 1;
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             cli_dry_run = 1;
@@ -136,6 +120,24 @@ int main(int argc, char **argv)
             strncpy(cli_timeout_arg, argv[++i], sizeof(cli_timeout_arg) - 1);
             cli_timeout_arg[sizeof(cli_timeout_arg) - 1] = '\0';
         }
+    }
+
+    /* Non-TTY JSON autodetect: skip when --daemon is set to avoid early exit
+     * before the daemon has a chance to start. */
+    if (!cli_json && !cli_daemon && !isatty(STDOUT_FILENO)) {
+        const char *env = getenv("NANOCODE_JSON");
+        if (env && strcmp(env, "1") == 0) cli_json = 1;
+    }
+
+    /* Short-circuit: JSON mode emits the envelope and exits without TUI. */
+    if (cli_json) {
+        JsonOutput jout;
+        json_output_init(&jout);
+        jout.status      = "done";
+        jout.result      = "nanocode json mode active (stub)";
+        jout.duration_ms = 0;
+        json_output_print(&jout);
+        return NC_EXIT_OK;
     }
 
     /* -----------------------------------------------------------------------
@@ -169,6 +171,58 @@ int main(int argc, char **argv)
             exec_mode = EXEC_MODE_READONLY;
         executor_set_mode(exec_mode);
     }
+
+    /* -----------------------------------------------------------------------
+     * Phase 2.5: Assemble ProviderConfig from config.
+     *
+     * Reads provider.type, provider.base_url, provider.port, provider.model,
+     * provider.api_key from config and maps them to a ProviderConfig struct.
+     *
+     * Port defaulting:
+     *   - claude:       443 (TLS)
+     *   - openai/ollama: 11434 (Ollama default; LM Studio uses 1234)
+     *
+     * TLS defaulting: off for localhost regardless of type.
+     * -------------------------------------------------------------------- */
+    ProviderConfig provider_cfg;
+    {
+        const char *type_str   = config_get_str(cfg, "provider.type");
+        const char *base_url   = config_get_str(cfg, "provider.base_url");
+        const char *model      = config_get_str(cfg, "provider.model");
+        const char *api_key    = config_get_str(cfg, "provider.api_key");
+        int         port_cfg   = config_get_int(cfg, "provider.port");
+
+        ProviderType ptype = PROVIDER_CLAUDE;
+        if (type_str && strcmp(type_str, "openai") == 0)
+            ptype = PROVIDER_OPENAI;
+        else if (type_str && strcmp(type_str, "ollama") == 0)
+            ptype = PROVIDER_OLLAMA;
+
+        /* Determine default port for type if not overridden. */
+        int port = port_cfg;
+        if (port <= 0) {
+            port = (ptype == PROVIDER_CLAUDE) ? 443 : 11434;
+        }
+
+        /* Disable TLS for localhost regardless of type. */
+        int use_tls = 1;
+        if (base_url && (strcmp(base_url, "localhost") == 0 ||
+                         strncmp(base_url, "127.", 4) == 0 ||
+                         strcmp(base_url, "::1") == 0)) {
+            use_tls = 0;
+        }
+        /* Cloud Claude endpoints always use TLS. */
+        if (ptype == PROVIDER_CLAUDE && use_tls == 0 && port == 443)
+            use_tls = 1;
+
+        provider_cfg.type     = ptype;
+        provider_cfg.base_url = base_url ? base_url : "api.anthropic.com";
+        provider_cfg.port     = port;
+        provider_cfg.use_tls  = use_tls;
+        provider_cfg.api_key  = api_key;
+        provider_cfg.model    = model ? model : "claude-opus-4-6";
+    }
+    (void)provider_cfg; /* TODO: pass to agent/loop once wiring is complete */
 
     /* -----------------------------------------------------------------------
      * Phase 3: Validate and activate sandbox.
@@ -239,10 +293,30 @@ int main(int argc, char **argv)
     const char *status_path = config_get_str(cfg, "daemon.status_path");
     const char *sock_path   = config_get_str(cfg, "daemon.sock_path");
 
-    if (!status_path || !status_path[0])
-        status_path = "nanocode.status.json";
-    if (!sock_path || !sock_path[0])
-        sock_path = "nanocode.sock";
+    /* Expand relative defaults to ~/.nanocode/ so the daemon files are not
+     * created in whatever the current working directory happens to be. */
+    char default_status_path[512];
+    char default_sock_path[512];
+    if (!status_path || !status_path[0]) {
+        const char *home = getenv("HOME");
+        if (home && home[0])
+            snprintf(default_status_path, sizeof(default_status_path),
+                     "%s/.nanocode/nanocode.status.json", home);
+        else
+            snprintf(default_status_path, sizeof(default_status_path),
+                     "nanocode.status.json");
+        status_path = default_status_path;
+    }
+    if (!sock_path || !sock_path[0]) {
+        const char *home = getenv("HOME");
+        if (home && home[0])
+            snprintf(default_sock_path, sizeof(default_sock_path),
+                     "%s/.nanocode/nanocode.sock", home);
+        else
+            snprintf(default_sock_path, sizeof(default_sock_path),
+                     "nanocode.sock");
+        sock_path = default_sock_path;
+    }
 
     if (cli_daemon) {
         time_t now = time(NULL);

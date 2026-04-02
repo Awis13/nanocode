@@ -7,7 +7,9 @@
  * Keys are in "section.name" dotted form, e.g. "provider.api_key".
  *
  * Supported sections and keys:
- *   [provider]      api_key, base_url, model, timeout_ms
+ *   [provider]      type ("claude"|"openai"|"ollama"), api_key, base_url,
+ *                   port (0=default: 443 for claude, 11434 for openai/ollama),
+ *                   model, timeout_ms
  *   [sandbox]       enabled (bool), profile
  *   [ui]            theme, word_wrap (bool), stream_delay_ms
  *   [system_prompt] append
@@ -24,7 +26,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "../src/util/arena.h"
+#include "util/arena.h"
 
 typedef struct Config Config;
 

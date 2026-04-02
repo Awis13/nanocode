@@ -120,6 +120,43 @@ int json_get_array_item_str(const JsonCtx *ctx, const char *json,
     return -1;
 }
 
+size_t json_escape_str(char *buf, size_t cap, size_t pos, const char *s)
+{
+    if (!s) {
+        /* JSON null literal */
+        const char null_lit[] = "null";
+        for (int i = 0; i < 4; i++) {
+            if (pos < cap) buf[pos] = null_lit[i];
+            pos++;
+        }
+        return pos;
+    }
+    if (pos < cap) buf[pos] = '"'; pos++;
+    for (const char *p = s; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') {
+            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = (char)c; }
+            pos += 2;
+        } else if (c == '\n') {
+            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = 'n'; }
+            pos += 2;
+        } else if (c == '\r') {
+            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = 'r'; }
+            pos += 2;
+        } else if (c == '\t') {
+            if (pos + 2 <= cap) { buf[pos] = '\\'; buf[pos+1] = 't'; }
+            pos += 2;
+        } else if (c < 0x20) {
+            /* skip control chars */
+        } else {
+            if (pos < cap) buf[pos] = (char)c;
+            pos++;
+        }
+    }
+    if (pos < cap) buf[pos] = '"'; pos++;
+    return pos;
+}
+
 int json_get_array_item_nested_str(const JsonCtx *ctx, const char *json,
                                    const char *array_key,
                                    const char *obj_key, const char *field,

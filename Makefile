@@ -67,7 +67,7 @@ tests/test_json: tests/test_json.c src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -Ivendor/jsmn -o $@ $^
 
 tests/test_executor: tests/test_executor.c src/tools/executor.c src/util/arena.c \
-                     src/core/status_file.c
+                     src/util/json.c src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
@@ -136,13 +136,13 @@ tests/test_config: tests/test_config.c src/core/config.c src/util/arena.c
 
 # CMP-150: MCP client — JSON-RPC 2.0, tool discovery, config
 tests/test_mcp: tests/test_mcp.c src/agent/mcp.c src/tools/executor.c \
-                src/util/arena.c src/util/buf.c src/core/status_file.c
+                src/util/arena.c src/util/buf.c src/util/json.c src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-124: tool output display — invocation header, result truncation, diff colouring
 tests/test_tool_display: tests/test_tool_display.c src/tui/tool_display.c \
                          src/tools/executor.c src/util/arena.c \
-                         src/core/status_file.c
+                         src/util/json.c src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-183: session event log — bounded NDJSON with rotation
@@ -155,7 +155,7 @@ tests/test_loop: tests/test_loop.c src/core/loop.c
 
 # CMP-153: cross-session memory — memory_write tool and memory_load
 tests/test_memory: tests/test_memory.c src/tools/memory.c src/tools/executor.c \
-                   src/util/arena.c src/core/status_file.c
+                   src/util/arena.c src/util/json.c src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-119: tool use protocol — parse + dispatch tool calls, schema payload
@@ -165,6 +165,7 @@ tests/test_tool_protocol: tests/test_tool_protocol.c \
                            src/tools/executor.c \
                            src/util/arena.c \
                            src/util/buf.c \
+                           src/util/json.c \
                            src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
@@ -186,16 +187,18 @@ tests/test_json_output: tests/test_json_output.c src/core/json_output.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-216-A: status file — atomic write, remove, null-safe
-tests/test_status_file: tests/test_status_file.c src/core/status_file.c
+tests/test_status_file: tests/test_status_file.c src/core/status_file.c \
+                        src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-216-A: daemon — Unix socket create/destroy/protocol
-tests/test_daemon: tests/test_daemon.c src/core/daemon.c src/core/loop.c
+tests/test_daemon: tests/test_daemon.c src/core/daemon.c src/core/loop.c \
+                   src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-226: --dry-run and --readonly execution modes
 tests/test_dryrun: tests/test_dryrun.c src/tools/executor.c src/util/arena.c \
-                   src/core/status_file.c
+                   src/util/json.c src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

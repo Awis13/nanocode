@@ -43,8 +43,14 @@ static int path_in_allowed(const char *path, const char *allowed_colon_sep)
     while (p) {
         char *colon = strchr(p, ':');
         if (colon) *colon = '\0';
-        if (*p && strncmp(path, p, strlen(p)) == 0)
-            return 1;
+        if (*p) {
+            /* Resolve prefix through realpath so symlinks (e.g. /tmp →
+             * /private/tmp on macOS) match the already-resolved path. */
+            char resolved_prefix[EDITOR_PATH_MAX];
+            const char *prefix = realpath(p, resolved_prefix) ? resolved_prefix : p;
+            if (strncmp(path, prefix, strlen(prefix)) == 0)
+                return 1;
+        }
         p = colon ? colon + 1 : NULL;
     }
     return 0;
@@ -58,10 +64,24 @@ int editor_open(const char *path, int line, const char *sandbox_allowed_paths)
 {
     if (!path || !path[0]) return -1;
 
-    /* Sandbox check (TODO: replace with sandbox_check_path() from CMP-198). */
-    if (!path_in_allowed(path, sandbox_allowed_paths)) {
-        fprintf(stderr, "editor: sandbox denied: %s\n", path);
-        return -1;
+    /* Sandbox check (TODO: replace with sandbox_check_path() from CMP-198).
+     * Resolve symlinks and dotdot components before prefix match to prevent
+     * traversal attacks like "/allowed/dir/../../../etc/passwd". */
+    {
+        const char *check = path;
+        char resolved[EDITOR_PATH_MAX];
+        if (sandbox_allowed_paths && sandbox_allowed_paths[0]) {
+            if (!realpath(path, resolved)) {
+                fprintf(stderr, "editor: sandbox denied (realpath failed): %s\n",
+                        path);
+                return -1;
+            }
+            check = resolved;
+        }
+        if (!path_in_allowed(check, sandbox_allowed_paths)) {
+            fprintf(stderr, "editor: sandbox denied: %s\n", path);
+            return -1;
+        }
     }
 
     /* Resolve editor: $VISUAL → $EDITOR → "vi". */

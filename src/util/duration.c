@@ -5,6 +5,7 @@
 #include "duration.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdlib.h>
 
 long parse_duration(const char *s)
@@ -28,8 +29,8 @@ long parse_duration(const char *s)
     int suffix = tolower((unsigned char)*end);
     switch (suffix) {
         case 's': return val;
-        case 'm': return val * 60;
-        case 'h': return val * 3600;
+        case 'm': if (val > LONG_MAX / 60)   return -1; return val * 60;
+        case 'h': if (val > LONG_MAX / 3600) return -1; return val * 3600;
         default:  return -1;
     }
 }

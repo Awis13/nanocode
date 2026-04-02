@@ -557,6 +557,99 @@ TEST(test_registry_reset_clears_plan_mode) {
     arena_free(a);
 }
 
+/* =========================================================================
+ * CMP-245: tool event hook tests
+ * ====================================================================== */
+
+typedef struct {
+    int start_count;
+    int done_count;
+    int error_count;
+} EventLog;
+
+static void event_logger(ToolEvent ev, void *ctx)
+{
+    EventLog *log = ctx;
+    switch (ev) {
+        case TOOL_EVENT_START: log->start_count++; break;
+        case TOOL_EVENT_DONE:  log->done_count++;  break;
+        case TOOL_EVENT_ERROR: log->error_count++; break;
+    }
+}
+
+TEST(test_tool_event_cb_fires_on_success) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("test", "{}", handler_noop);
+
+    EventLog log = {0};
+    executor_set_tool_event_cb(event_logger, &log);
+
+    tool_invoke(a, "test", "{}");
+    ASSERT_EQ(log.start_count, 1);
+    ASSERT_EQ(log.done_count,  1);
+    ASSERT_EQ(log.error_count, 0);
+
+    arena_free(a);
+}
+
+TEST(test_tool_event_cb_fires_error_on_tool_error) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    /* handler_fail returns error=1 */
+    tool_register("bad", "{}", handler_fail);
+
+    EventLog log = {0};
+    executor_set_tool_event_cb(event_logger, &log);
+
+    tool_invoke(a, "bad", "{}");
+    ASSERT_EQ(log.start_count, 1);
+    ASSERT_EQ(log.done_count,  0);
+    ASSERT_EQ(log.error_count, 1);
+
+    arena_free(a);
+}
+
+TEST(test_tool_event_cb_not_fired_for_unknown_tool) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    /* No tools registered — unknown tool returns error but cb should not fire. */
+    EventLog log = {0};
+    executor_set_tool_event_cb(event_logger, &log);
+
+    ToolResult r = tool_invoke(a, "no_such_tool", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_EQ(log.start_count, 0);
+    ASSERT_EQ(log.done_count,  0);
+    ASSERT_EQ(log.error_count, 0);
+
+    arena_free(a);
+}
+
+TEST(test_tool_event_cb_cleared_by_reset) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("test", "{}", handler_noop);
+    EventLog log = {0};
+    executor_set_tool_event_cb(event_logger, &log);
+
+    tool_registry_reset();
+    tool_register("test", "{}", handler_noop);
+
+    tool_invoke(a, "test", "{}");
+    ASSERT_EQ(log.start_count, 0);  /* callback was cleared */
+
+    arena_free(a);
+}
+
 int main(void)
 {
     fprintf(stderr, "=== test_executor ===\n");
@@ -595,6 +688,12 @@ int main(void)
     RUN_TEST(test_plan_mode_allows_read_tools);
     RUN_TEST(test_plan_mode_toggle_restores_normal);
     RUN_TEST(test_registry_reset_clears_plan_mode);
+
+    /* CMP-245: tool event hook */
+    RUN_TEST(test_tool_event_cb_fires_on_success);
+    RUN_TEST(test_tool_event_cb_fires_error_on_tool_error);
+    RUN_TEST(test_tool_event_cb_not_fired_for_unknown_tool);
+    RUN_TEST(test_tool_event_cb_cleared_by_reset);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

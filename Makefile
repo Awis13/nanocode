@@ -90,7 +90,7 @@ tests/test_renderer: tests/test_renderer.c src/tui/renderer.c \
                      src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
-tests/test_statusbar: tests/test_statusbar.c src/tui/statusbar.c
+tests/test_statusbar: tests/test_statusbar.c src/tui/statusbar.c src/tui/pet.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_diff_sandbox: tests/test_diff_sandbox.c src/tools/diff_sandbox.c \

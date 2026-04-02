@@ -15,11 +15,13 @@
 #include "../include/config.h"
 #include "../include/editor.h"
 #include "../include/json_output.h"
+#include "../include/pet.h"
 #include "../include/sandbox.h"
 #include "../include/status_file.h"
 #include "../include/daemon.h"
 #include "../src/api/provider.h"
 #include "../src/core/loop.h"
+#include "../src/tui/statusbar.h"
 #include "../src/util/arena.h"
 #include "../src/util/duration.h"
 #include "../src/tools/bash.h"
@@ -51,6 +53,17 @@ static const char *daemon_dispatch_stub(const char *prompt, const char *cwd,
 {
     (void)prompt; (void)cwd; (void)ctx;
     return "ok";
+}
+
+/* Tool event callback — transitions pet state based on tool execution. */
+static void pet_tool_event_cb(ToolEvent ev, void *ctx)
+{
+    Pet *pet = ctx;
+    switch (ev) {
+        case TOOL_EVENT_START: pet_transition(pet, PET_ACTIVE); break;
+        case TOOL_EVENT_DONE:  pet_transition(pet, PET_DONE);   break;
+        case TOOL_EVENT_ERROR: pet_transition(pet, PET_ERROR);  break;
+    }
 }
 
 int main(int argc, char **argv)
@@ -309,6 +322,29 @@ int main(int argc, char **argv)
     );
 
     /* -----------------------------------------------------------------------
+     * Phase 3.6: Initialize pet and wire TUI/executor observers.
+     * -------------------------------------------------------------------- */
+    Pet         g_pet = {0};
+    StatusBar  *g_statusbar = NULL;
+
+    {
+        const char *pet_val = config_get_str(cfg, "pet");
+        PetKind kind = pet_kind_from_str(pet_val ? pet_val : "off");
+        g_pet = pet_new(kind);
+
+        /* Status bar — only when writing to a TTY in interactive mode. */
+        if (!cli_json && !cli_daemon && isatty(STDERR_FILENO)) {
+            g_statusbar = statusbar_new(STDERR_FILENO, &provider_cfg, 0);
+            if (g_statusbar)
+                statusbar_set_pet(g_statusbar, &g_pet);
+        }
+
+        /* Tool event hook — pet reacts to tool execution. */
+        if (kind != PET_OFF)
+            executor_set_tool_event_cb(pet_tool_event_cb, &g_pet);
+    }
+
+    /* -----------------------------------------------------------------------
      * Phase 4: Main loop.
      * -------------------------------------------------------------------- */
     g_loop = loop_new();
@@ -407,6 +443,11 @@ int main(int argc, char **argv)
     if (cli_daemon) {
         daemon_stop(g_daemon);
         status_file_remove(status_path);
+    }
+
+    if (g_statusbar) {
+        statusbar_clear(g_statusbar);
+        statusbar_free(g_statusbar);
     }
 
     loop_free(g_loop);

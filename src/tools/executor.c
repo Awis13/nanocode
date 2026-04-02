@@ -44,6 +44,19 @@ void executor_set_status_tracker(const char *path, void *info)
     s_status_info = (StatusInfo *)info;
 }
 
+/* -------------------------------------------------------------------------
+ * Tool event hook — optional, set via executor_set_tool_event_cb()
+ * ---------------------------------------------------------------------- */
+
+static tool_event_cb s_event_cb  = NULL;
+static void         *s_event_ctx = NULL;
+
+void executor_set_tool_event_cb(tool_event_cb cb, void *ctx)
+{
+    s_event_cb  = cb;
+    s_event_ctx = ctx;
+}
+
 void tool_register(const char *name, const char *schema_json, ToolHandler fn)
 {
     assert(name != NULL);
@@ -62,8 +75,10 @@ void tool_register(const char *name, const char *schema_json, ToolHandler fn)
 
 void tool_registry_reset(void)
 {
-    s_count    = 0;
+    s_count     = 0;
     s_exec_mode = EXEC_MODE_NORMAL;
+    s_event_cb  = NULL;
+    s_event_ctx = NULL;
 }
 
 void executor_set_mode(ExecMode mode)
@@ -144,7 +159,10 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
 
     for (int i = 0; i < s_count; i++) {
         if (strcmp(s_registry[i].name, name) == 0) {
+            if (s_event_cb) s_event_cb(TOOL_EVENT_START, s_event_ctx);
             ToolResult r = s_registry[i].fn(arena, args_json ? args_json : "{}");
+            if (s_event_cb)
+                s_event_cb(r.error ? TOOL_EVENT_ERROR : TOOL_EVENT_DONE, s_event_ctx);
             if (s_status_path && s_status_info) {
                 s_status_info->last_action = (char *)(uintptr_t)name;
                 s_status_info->tool_calls++;

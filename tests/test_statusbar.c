@@ -5,6 +5,7 @@
 #include "test.h"
 #include "tui/statusbar.h"
 #include "api/provider.h"
+#include "pet.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -266,6 +267,103 @@ TEST(test_clear_null_safe)
 }
 
 /* =========================================================================
+ * CMP-245: pet integration tests
+ * ====================================================================== */
+
+TEST(test_set_pet_null_safe)
+{
+    /* Both NULL variants must not crash. */
+    statusbar_set_pet(NULL, NULL);
+
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(STDERR_FILENO, &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+    statusbar_set_pet(sb, NULL);  /* detach */
+    statusbar_free(sb);
+}
+
+TEST(test_set_pet_off_no_extra_ansi)
+{
+    /* PET_OFF: statusbar_update must not emit extra ANSI lines for the pet
+     * (the pet area stays blank).  We verify by checking the output length
+     * against an identical run without a pet. */
+    int fds_no_pet[2], fds_with_pet[2];
+    ASSERT_TRUE(pipe(fds_no_pet)   == 0);
+    ASSERT_TRUE(pipe(fds_with_pet) == 0);
+
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+
+    StatusBar *sb_no_pet = statusbar_new(fds_no_pet[1],   &cfg, 0);
+    StatusBar *sb_pet    = statusbar_new(fds_with_pet[1], &cfg, 0);
+    ASSERT_NOT_NULL(sb_no_pet);
+    ASSERT_NOT_NULL(sb_pet);
+
+    Pet pet_off = pet_new(PET_OFF);
+    statusbar_set_pet(sb_pet, &pet_off);
+
+    statusbar_update(sb_no_pet,  100, 50, 1);
+    statusbar_update(sb_pet,     100, 50, 1);
+
+    close(fds_no_pet[1]);
+    close(fds_with_pet[1]);
+
+    char buf_no_pet[1024], buf_with_pet[1024];
+    int  n_no_pet   = (int)read(fds_no_pet[0],   buf_no_pet,   sizeof(buf_no_pet)   - 1);
+    int  n_with_pet = (int)read(fds_with_pet[0], buf_with_pet, sizeof(buf_with_pet) - 1);
+    close(fds_no_pet[0]);
+    close(fds_with_pet[0]);
+
+    /* PET_OFF: output size should be the same as without pet. */
+    ASSERT_EQ(n_no_pet, n_with_pet);
+
+    statusbar_free(sb_no_pet);
+    statusbar_free(sb_pet);
+}
+
+TEST(test_set_pet_ticks_on_update)
+{
+    /* After N statusbar_update() calls the pet should have accumulated ticks.
+     * We verify by checking that idle_ticks increments (auto-sleep after
+     * PET_SLEEP_TICKS ticks). */
+    int fds[2];
+    ASSERT_TRUE(pipe(fds) == 0);
+
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(fds[1], &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+
+    Pet pet = pet_new(PET_CAT);
+    ASSERT_EQ(pet.state, PET_IDLE);
+    ASSERT_EQ(pet.idle_ticks, 0);
+
+    statusbar_set_pet(sb, &pet);
+
+    /* Drive PET_SLEEP_TICKS updates — pet should auto-transition to SLEEP. */
+    for (int i = 0; i < PET_SLEEP_TICKS; i++)
+        statusbar_update(sb, 0, 0, 1);
+
+    ASSERT_EQ(pet.state, PET_SLEEP);
+
+    close(fds[1]);
+    /* Drain the pipe. */
+    char drain[256];
+    while (read(fds[0], drain, sizeof(drain)) > 0) {}
+    close(fds[0]);
+
+    statusbar_free(sb);
+}
+
+TEST(test_set_pet_transition_active)
+{
+    /* pet_transition to ACTIVE resets idle_ticks and changes state. */
+    Pet pet = pet_new(PET_CAT);
+    pet.idle_ticks = 50;
+    pet_transition(&pet, PET_ACTIVE);
+    ASSERT_EQ(pet.state, PET_ACTIVE);
+    ASSERT_EQ(pet.idle_ticks, 0);
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -286,6 +384,12 @@ int main(void)
     RUN_TEST(test_clear_writes_to_fd);
     RUN_TEST(test_update_null_safe);
     RUN_TEST(test_clear_null_safe);
+
+    /* CMP-245: pet integration */
+    RUN_TEST(test_set_pet_null_safe);
+    RUN_TEST(test_set_pet_off_no_extra_ansi);
+    RUN_TEST(test_set_pet_ticks_on_update);
+    RUN_TEST(test_set_pet_transition_active);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

@@ -113,4 +113,24 @@ char *tool_result_to_json(Arena *arena, const char *tool_use_id,
  */
 void executor_set_status_tracker(const char *path, void *info);
 
+/* -------------------------------------------------------------------------
+ * Tool event hook — observer callback fired before/after each invocation.
+ *
+ * TOOL_EVENT_START : tool is about to run (may be blocked by mode)
+ * TOOL_EVENT_DONE  : tool completed without error
+ * TOOL_EVENT_ERROR : tool completed with error, or was blocked
+ *
+ * Register with executor_set_tool_event_cb(). Pass cb=NULL to remove.
+ * `ctx` is passed through to the callback unchanged.
+ * ---------------------------------------------------------------------- */
+typedef enum {
+    TOOL_EVENT_START = 0,
+    TOOL_EVENT_DONE  = 1,
+    TOOL_EVENT_ERROR = 2
+} ToolEvent;
+
+typedef void (*tool_event_cb)(ToolEvent ev, void *ctx);
+
+void executor_set_tool_event_cb(tool_event_cb cb, void *ctx);
+
 #endif /* EXECUTOR_H */

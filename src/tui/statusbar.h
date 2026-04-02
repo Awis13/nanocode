@@ -15,6 +15,7 @@
 #define STATUSBAR_H
 
 #include "../api/provider.h"
+#include "pet.h"
 
 typedef struct StatusBar StatusBar;
 
@@ -42,6 +43,19 @@ void statusbar_update(StatusBar *sb, int in_tok, int out_tok, int turn);
  * Call on exit before the process terminates.
  */
 void statusbar_clear(StatusBar *sb);
+
+/*
+ * Attach a pet to the status bar.
+ * When set, each statusbar_update() call will:
+ *   - call pet_tick() to advance the animation
+ *   - render the pet frame (4 lines) above the status bar line, right-aligned
+ *   - skip rendering if terminal is too small (<40 cols or <10 rows) or if
+ *     pet kind is PET_OFF
+ *
+ * Color is enabled when the environment allows it (no NO_COLOR, not dumb TERM).
+ * Pass NULL to detach the pet and stop rendering it.
+ */
+void statusbar_set_pet(StatusBar *sb, Pet *pet);
 
 /*
  * Free the StatusBar struct. Does not close `fd`.

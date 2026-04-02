@@ -37,6 +37,7 @@ struct StatusBar {
     char   model[64];
     double input_rate;   /* USD per MTok */
     double output_rate;  /* USD per MTok */
+    Pet   *pet;          /* optional pet — NULL if none */
 };
 
 /* -------------------------------------------------------------------------
@@ -67,6 +68,95 @@ static int get_terminal_rows(int fd)
     if (ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
         return ws.ws_row;
     return 24;
+}
+
+static int get_terminal_cols(int fd)
+{
+    struct winsize ws;
+    if (ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+        return ws.ws_col;
+    return 80;
+}
+
+/*
+ * Return 1 if ANSI color output is appropriate for this process.
+ * Disabled when NO_COLOR is set or TERM=dumb.
+ */
+static int color_enabled(void)
+{
+    const char *no_color = getenv("NO_COLOR");
+    if (no_color) return 0;
+    const char *term = getenv("TERM");
+    if (term && strcmp(term, "dumb") == 0) return 0;
+    return 1;
+}
+
+/*
+ * Render the pet frame (4 lines) at the right side of the terminal,
+ * rows (last_row - 4) through (last_row - 1).  The frame string is
+ * '\n'-separated; each line is about 8 visible characters wide.
+ *
+ * Skips rendering if terminal is too small or pet is PET_OFF.
+ */
+static void render_pet(int fd, Pet *pet, int last_row)
+{
+    int cols = get_terminal_cols(fd);
+    if (cols < 40 || last_row < 10) return;
+    if (pet->kind == PET_OFF) return;
+
+    const char *frame = pet_frame(pet, color_enabled());
+
+    /* Split the '\n'-separated frame into 4 lines and emit each one. */
+    char buf[1024];
+    int  n     = 0;
+    int  col   = cols - 8;  /* right-align: 8 visible chars wide */
+    int  row   = last_row - 4;
+
+    const char *p = frame;
+    for (int line = 0; line < 4 && *p; line++) {
+        /* Find end of this line. */
+        const char *end = strchr(p, '\n');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+
+        /* Build ANSI sequence: save cursor, move, erase 8 chars, write line, restore. */
+        n += snprintf(buf + n, sizeof(buf) - (size_t)n,
+                      "\033[s"         /* save cursor */
+                      "\033[%d;%dH"   /* move to row, col */
+                      "%.*s"           /* line content (may include ANSI codes) */
+                      "\033[u",        /* restore cursor */
+                      row + line, col,
+                      (int)len, p);
+
+        p = end ? end + 1 : p + len;
+    }
+
+    if (n > 0 && n < (int)sizeof(buf))
+        (void)write(fd, buf, (size_t)n);
+}
+
+/*
+ * Clear the 4-line pet area (rows last_row-4 through last_row-1).
+ */
+static void clear_pet(int fd, int last_row)
+{
+    int cols = get_terminal_cols(fd);
+    if (cols < 40 || last_row < 10) return;
+
+    char buf[512];
+    int  n   = 0;
+    int  col = cols - 8;
+
+    for (int line = 0; line < 4; line++) {
+        n += snprintf(buf + n, sizeof(buf) - (size_t)n,
+                      "\033[s"
+                      "\033[%d;%dH"
+                      "        "    /* 8 spaces — erase pet area */
+                      "\033[u",
+                      last_row - 4 + line, col);
+    }
+
+    if (n > 0 && n < (int)sizeof(buf))
+        (void)write(fd, buf, (size_t)n);
 }
 
 /*
@@ -183,19 +273,35 @@ StatusBar *statusbar_new(int fd, const ProviderConfig *cfg, int max_turns)
     return sb;
 }
 
+void statusbar_set_pet(StatusBar *sb, Pet *pet)
+{
+    if (!sb) return;
+    sb->pet = pet;
+}
+
 void statusbar_update(StatusBar *sb, int in_tok, int out_tok, int turn)
 {
     if (!sb) return;
 
+    int last_row = get_terminal_rows(sb->fd);
+
+    /* Tick and render pet before the status line. */
+    if (sb->pet) {
+        pet_tick(sb->pet);
+        render_pet(sb->fd, sb->pet, last_row);
+    }
+
     char content[256];
     statusbar_format_line(sb, in_tok, out_tok, turn, content, (int)sizeof(content));
-    emit_line(sb->fd, get_terminal_rows(sb->fd), content);
+    emit_line(sb->fd, last_row, content);
 }
 
 void statusbar_clear(StatusBar *sb)
 {
     if (!sb) return;
-    emit_line(sb->fd, get_terminal_rows(sb->fd), NULL);
+    int last_row = get_terminal_rows(sb->fd);
+    if (sb->pet) clear_pet(sb->fd, last_row);
+    emit_line(sb->fd, last_row, NULL);
 }
 
 void statusbar_free(StatusBar *sb)

@@ -208,8 +208,55 @@ int main(int argc, char **argv)
         loop_add_timer(g_loop, timeout_ms, session_timeout_cb, NULL);
     }
 
+    /* -----------------------------------------------------------------------
+     * Phase 4.5: Daemon mode — Unix socket + status file.
+     * -------------------------------------------------------------------- */
+    Daemon    *g_daemon     = NULL;
+    StatusInfo g_status     = {0};
+    char       g_started_at[32] = {0};
+    const char *status_path = config_get_str(cfg, "daemon.status_path");
+    const char *sock_path   = config_get_str(cfg, "daemon.sock_path");
+
+    if (!status_path || !status_path[0])
+        status_path = "nanocode.status.json";
+    if (!sock_path || !sock_path[0])
+        sock_path = "nanocode.sock";
+
+    if (cli_daemon) {
+        time_t now = time(NULL);
+        struct tm *tm_utc = gmtime(&now);
+        if (tm_utc)
+            strftime(g_started_at, sizeof(g_started_at),
+                     "%Y-%m-%dT%H:%M:%SZ", tm_utc);
+
+        g_status.pid         = getpid();
+        g_status.state       = "idle";
+        g_status.task        = NULL;
+        g_status.started_at  = g_started_at;
+        g_status.last_action = NULL;
+        g_status.tool_calls  = 0;
+        status_file_write(status_path, &g_status);
+
+        g_daemon = daemon_start(g_loop, sock_path, daemon_dispatch_stub, NULL);
+        if (!g_daemon) {
+            fprintf(stderr, "nanocode: failed to start daemon on %s\n",
+                    sock_path);
+            loop_free(g_loop);
+            g_loop = NULL;
+            status_file_remove(status_path);
+            arena_free(arena);
+            return 1;
+        }
+        printf("nanocode daemon listening on %s\n", sock_path);
+    }
+
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
+
+    if (cli_daemon) {
+        daemon_stop(g_daemon);
+        status_file_remove(status_path);
+    }
 
     loop_free(g_loop);
     g_loop = NULL;

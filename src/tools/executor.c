@@ -6,11 +6,13 @@
 #include "jsmn.h"
 
 #include "executor.h"
+#include "../../include/status_file.h"
 
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 
 /* Forward declaration — json_escape is defined in the serialization section. */
 static size_t json_escape(char *dst, size_t cap, const char *src, size_t srclen);
@@ -28,6 +30,19 @@ typedef struct {
 static ToolEntry s_registry[TOOL_REGISTRY_MAX];
 static int       s_count = 0;
 static ExecMode  s_exec_mode = EXEC_MODE_NORMAL;
+
+/* -------------------------------------------------------------------------
+ * Status tracker — optional, set via executor_set_status_tracker()
+ * ---------------------------------------------------------------------- */
+
+static const char *s_status_path = NULL;
+static StatusInfo *s_status_info = NULL;
+
+void executor_set_status_tracker(const char *path, void *info)
+{
+    s_status_path = path;
+    s_status_info = (StatusInfo *)info;
+}
 
 void tool_register(const char *name, const char *schema_json, ToolHandler fn)
 {
@@ -98,8 +113,15 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
     }
 
     for (int i = 0; i < s_count; i++) {
-        if (strcmp(s_registry[i].name, name) == 0)
-            return s_registry[i].fn(arena, args_json ? args_json : "{}");
+        if (strcmp(s_registry[i].name, name) == 0) {
+            ToolResult r = s_registry[i].fn(arena, args_json ? args_json : "{}");
+            if (s_status_path && s_status_info) {
+                s_status_info->last_action = (char *)(uintptr_t)name;
+                s_status_info->tool_calls++;
+                status_file_write(s_status_path, s_status_info);
+            }
+            return r;
+        }
     }
 
     /* Unknown tool — return error result with descriptive message. */

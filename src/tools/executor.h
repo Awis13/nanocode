@@ -98,4 +98,12 @@ int tool_list_names(const char **names, int max_names);
 char *tool_result_to_json(Arena *arena, const char *tool_use_id,
                           const ToolResult *result);
 
+/*
+ * Attach a status tracker: after every tool invocation executor updates
+ * info->last_action and info->tool_calls and calls status_file_write.
+ * `info` must be a pointer to a StatusInfo (from status_file.h).
+ * Pass NULL path to disable.
+ */
+void executor_set_status_tracker(const char *path, void *info);
+
 #endif /* EXECUTOR_H */

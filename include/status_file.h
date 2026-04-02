@@ -15,7 +15,7 @@ typedef struct {
     char  *state;         /* "idle", "working", "waiting_input" */
     char  *task;          /* current prompt or last prompt */
     char  *started_at;    /* ISO 8601 UTC */
-    char  *last_action;   /* last tool name invoked */
+    const char *last_action; /* last tool name invoked */
     int    tool_calls;    /* running count since startup */
 } StatusInfo;
 

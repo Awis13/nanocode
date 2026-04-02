@@ -34,6 +34,40 @@ static const char *echo_dispatch(const char *prompt, const char *cwd, void *ctx)
     return prompt;
 }
 
+/* Dispatch callback that returns a very large payload. */
+static const char *large_dispatch(const char *prompt, const char *cwd, void *ctx)
+{
+    (void)prompt;
+    (void)cwd;
+    (void)ctx;
+    static char big[70000];
+    static int init = 0;
+    if (!init) {
+        memset(big, 'x', sizeof(big) - 1);
+        big[sizeof(big) - 1] = '\0';
+        init = 1;
+    }
+    return big;
+}
+
+static ssize_t read_all(int fd, char *buf, size_t cap)
+{
+    size_t off = 0;
+    while (off + 1 < cap) {
+        ssize_t n = read(fd, buf + off, cap - 1 - off);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+        off += (size_t)n;
+    }
+    buf[off] = '\0';
+    return (ssize_t)off;
+}
+
 /* -------------------------------------------------------------------------
  * Tests — null / error guards
  * ---------------------------------------------------------------------- */
@@ -85,6 +119,24 @@ TEST(test_start_creates_socket_file)
     struct stat st;
     ASSERT_EQ(stat(SOCK_PATH, &st), 0);
     ASSERT_TRUE(S_ISSOCK(st.st_mode));
+
+    daemon_stop(d);
+    loop_free(l);
+    cleanup_sock();
+}
+
+TEST(test_start_socket_permissions_0600)
+{
+    cleanup_sock();
+    Loop *l = loop_new();
+    ASSERT_NOT_NULL(l);
+
+    Daemon *d = daemon_start(l, SOCK_PATH, echo_dispatch, NULL);
+    ASSERT_NOT_NULL(d);
+
+    struct stat st;
+    ASSERT_EQ(stat(SOCK_PATH, &st), 0);
+    ASSERT_EQ((int)(st.st_mode & 0777), 0600);
 
     daemon_stop(d);
     loop_free(l);
@@ -198,6 +250,46 @@ TEST(test_missing_prompt_returns_error)
     cleanup_sock();
 }
 
+TEST(test_large_response_returns_structured_error)
+{
+    cleanup_sock();
+    Loop *l = loop_new();
+    ASSERT_NOT_NULL(l);
+
+    Daemon *d = daemon_start(l, SOCK_PATH, large_dispatch, NULL);
+    ASSERT_NOT_NULL(d);
+
+    int cfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    ASSERT_TRUE(cfd >= 0);
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCK_PATH, sizeof(addr.sun_path) - 1);
+    ASSERT_EQ(connect(cfd, (struct sockaddr *)&addr, sizeof(addr)), 0);
+
+    const char *req = "{\"prompt\":\"large\",\"cwd\":\"/tmp\"}\n";
+    ASSERT_TRUE(write(cfd, req, strlen(req)) > 0);
+
+    for (int i = 0; i < 10; i++)
+        loop_step(l, 10);
+
+    char *resp = calloc(1, 4096);
+    ASSERT_NOT_NULL(resp);
+    ssize_t n = read_all(cfd, resp, 4096);
+    ASSERT_TRUE(n > 0);
+
+    ASSERT_TRUE(strstr(resp, "\"status\"") != NULL);
+    ASSERT_TRUE(strstr(resp, "\"error\"") != NULL);
+    ASSERT_TRUE(strstr(resp, "response truncated") != NULL);
+
+    free(resp);
+    close(cfd);
+    daemon_stop(d);
+    loop_free(l);
+    cleanup_sock();
+}
+
 /* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
@@ -211,9 +303,11 @@ int main(void)
     RUN_TEST(test_start_null_dispatch_returns_null);
     RUN_TEST(test_stop_null_is_noop);
     RUN_TEST(test_start_creates_socket_file);
+    RUN_TEST(test_start_socket_permissions_0600);
     RUN_TEST(test_stop_removes_socket_file);
     RUN_TEST(test_round_trip_echo);
     RUN_TEST(test_missing_prompt_returns_error);
+    RUN_TEST(test_large_response_returns_structured_error);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

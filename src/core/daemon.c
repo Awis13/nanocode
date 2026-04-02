@@ -259,7 +259,7 @@ static void conn_handle(ConnEntry *c)
      * Replace with a safe error envelope instead of sending corrupt JSON. */
     if (pos >= cap) {
         static const char trunc_resp[] =
-            "{\"status\":\"error\",\"result\":\"response truncated\"}\n";
+            "{\"status\":\"error\",\"error\":\"response truncated\"}\n";
         pos = sizeof(trunc_resp) - 1;
         memcpy(resp, trunc_resp, pos);
     }
@@ -329,8 +329,12 @@ Daemon *daemon_start(Loop *loop, const char *sock_path,
     }
 
     /* Restrict socket to owner only — prevents other users from connecting. */
-    if (chmod(sock_path, 0600) < 0)
+    if (chmod(sock_path, 0600) < 0) {
         perror("daemon: chmod");
+        close(lfd);
+        unlink(sock_path);
+        return NULL;
+    }
 
     if (listen(lfd, 8) < 0) {
         perror("daemon: listen");

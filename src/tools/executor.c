@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdint.h>
 
 /* Forward declaration — json_escape is defined in the serialization section. */
 static size_t json_escape(char *dst, size_t cap, const char *src, size_t srclen);
@@ -38,10 +37,10 @@ static ExecMode  s_exec_mode = EXEC_MODE_NORMAL;
 static const char *s_status_path = NULL;
 static StatusInfo *s_status_info = NULL;
 
-void executor_set_status_tracker(const char *path, void *info)
+void executor_set_status_tracker(const char *path, StatusInfo *info)
 {
     s_status_path = path;
-    s_status_info = (StatusInfo *)info;
+    s_status_info = info;
 }
 
 /* -------------------------------------------------------------------------
@@ -164,7 +163,7 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
             if (s_event_cb)
                 s_event_cb(r.error ? TOOL_EVENT_ERROR : TOOL_EVENT_DONE, s_event_ctx);
             if (s_status_path && s_status_info) {
-                s_status_info->last_action = (char *)(uintptr_t)name;
+                s_status_info->last_action = name;
                 s_status_info->tool_calls++;
                 status_file_write(s_status_path, s_status_info);
             }

@@ -9,6 +9,7 @@
 #define EXECUTOR_H
 
 #include "../util/arena.h"
+#include "../../include/status_file.h"
 #include <stddef.h>
 
 /* Hard cap on number of registered tools. */
@@ -111,7 +112,7 @@ char *tool_result_to_json(Arena *arena, const char *tool_use_id,
  * `info` must be a pointer to a StatusInfo (from status_file.h).
  * Pass NULL path to disable.
  */
-void executor_set_status_tracker(const char *path, void *info);
+void executor_set_status_tracker(const char *path, StatusInfo *info);
 
 /* -------------------------------------------------------------------------
  * Tool event hook — observer callback fired before/after each invocation.

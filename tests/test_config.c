@@ -1,5 +1,5 @@
 /*
- * test_config.c — unit tests for the config system (CMP-141)
+ * test_config.c — unit tests for the config system (CMP-141, CMP-187)
  *
  * Tests cover:
  *   - Defaults returned when no file is loaded
@@ -7,6 +7,11 @@
  *   - Unknown / missing keys fall back to compiled-in defaults
  *   - Invalid TOML lines are skipped without crashing
  *   - config_load_path with a temp file
+ *   - CMP-187: new config sections (rendering, theme, layout, behavior,
+ *     keys, performance) and their defaults
+ *   - CMP-187: config_set() -- live mutation
+ *   - CMP-187: config_save() -- round-trip persist and reload
+ *   - CMP-187: config_cmd_set() -- ":set key value" parsing
  *   - ASan-clean: no leaks or invalid accesses (run with DEBUG=1)
  */
 
@@ -424,6 +429,367 @@ TEST(test_system_prompt_append)
     arena_free(a);
 }
 
+
+/* =========================================================================
+ * CMP-187: new section defaults
+ * ====================================================================== */
+
+TEST(test_rendering_defaults)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_int(cfg, "rendering.target_fps"),     60);
+    ASSERT_EQ(config_get_int(cfg, "rendering.frame_batch_ms"), 16);
+    ASSERT_STR_EQ(config_get_str(cfg, "rendering.scroll_mode"), "smooth");
+    arena_free(a);
+}
+
+TEST(test_theme_defaults)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.accent_color"),   "cyan");
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.diff_add_color"), "green");
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.diff_rm_color"),  "red");
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.syntax_theme"),   "monokai");
+    ASSERT_EQ(config_get_bool(cfg, "theme.true_color"), 1);
+    arena_free(a);
+}
+
+TEST(test_layout_defaults)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "layout.panel_split"),         "horizontal");
+    ASSERT_STR_EQ(config_get_str(cfg, "layout.status_bar_position"), "bottom");
+    ASSERT_EQ(config_get_int(cfg, "layout.max_width"), 0);
+    ASSERT_EQ(config_get_int(cfg, "layout.padding"),   1);
+    arena_free(a);
+}
+
+TEST(test_behavior_defaults)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_bool(cfg, "behavior.auto_approve_tools"),  0);
+    ASSERT_EQ(config_get_bool(cfg, "behavior.confirm_destructive"), 1);
+    ASSERT_EQ(config_get_int(cfg,  "behavior.max_context_tokens"),  100000);
+    arena_free(a);
+}
+
+TEST(test_keys_defaults)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.submit"),      "enter");
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.cancel"),      "ctrl-c");
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.scroll_up"),   "ctrl-u");
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.scroll_down"), "ctrl-d");
+    arena_free(a);
+}
+
+TEST(test_performance_defaults)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_int(cfg, "performance.idle_timeout_ms"),  5000);
+    ASSERT_EQ(config_get_int(cfg, "performance.max_output_lines"), 10000);
+    ASSERT_EQ(config_get_int(cfg, "performance.history_limit_mb"), 10);
+    arena_free(a);
+}
+
+/* =========================================================================
+ * CMP-187: new section TOML parsing
+ * ====================================================================== */
+
+TEST(test_rendering_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[rendering]\n"
+        "target_fps     = 30\n"
+        "frame_batch_ms = 8\n"
+        "scroll_mode    = \"jump\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_int(cfg, "rendering.target_fps"),     30);
+    ASSERT_EQ(config_get_int(cfg, "rendering.frame_batch_ms"), 8);
+    ASSERT_STR_EQ(config_get_str(cfg, "rendering.scroll_mode"), "jump");
+    arena_free(a);
+}
+
+TEST(test_theme_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[theme]\n"
+        "accent_color   = \"#ff6600\"\n"
+        "diff_add_color = \"blue\"\n"
+        "diff_rm_color  = \"magenta\"\n"
+        "syntax_theme   = \"solarized\"\n"
+        "true_color     = false\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.accent_color"),   "#ff6600");
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.diff_add_color"), "blue");
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.diff_rm_color"),  "magenta");
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.syntax_theme"),   "solarized");
+    ASSERT_EQ(config_get_bool(cfg, "theme.true_color"), 0);
+    arena_free(a);
+}
+
+TEST(test_layout_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[layout]\n"
+        "panel_split         = \"vertical\"\n"
+        "status_bar_position = \"top\"\n"
+        "max_width           = 120\n"
+        "padding             = 2\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "layout.panel_split"),         "vertical");
+    ASSERT_STR_EQ(config_get_str(cfg, "layout.status_bar_position"), "top");
+    ASSERT_EQ(config_get_int(cfg, "layout.max_width"), 120);
+    ASSERT_EQ(config_get_int(cfg, "layout.padding"),   2);
+    arena_free(a);
+}
+
+TEST(test_behavior_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[behavior]\n"
+        "auto_approve_tools  = true\n"
+        "confirm_destructive = false\n"
+        "max_context_tokens  = 200000\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_bool(cfg, "behavior.auto_approve_tools"),  1);
+    ASSERT_EQ(config_get_bool(cfg, "behavior.confirm_destructive"), 0);
+    ASSERT_EQ(config_get_int(cfg,  "behavior.max_context_tokens"),  200000);
+    arena_free(a);
+}
+
+TEST(test_keys_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[keys]\n"
+        "submit      = \"ctrl-j\"\n"
+        "cancel      = \"escape\"\n"
+        "scroll_up   = \"page-up\"\n"
+        "scroll_down = \"page-down\"\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.submit"),      "ctrl-j");
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.cancel"),      "escape");
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.scroll_up"),   "page-up");
+    ASSERT_STR_EQ(config_get_str(cfg, "keys.scroll_down"), "page-down");
+    arena_free(a);
+}
+
+TEST(test_performance_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[performance]\n"
+        "idle_timeout_ms  = 1000\n"
+        "max_output_lines = 5000\n"
+        "history_limit_mb = 50\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_int(cfg, "performance.idle_timeout_ms"),  1000);
+    ASSERT_EQ(config_get_int(cfg, "performance.max_output_lines"), 5000);
+    ASSERT_EQ(config_get_int(cfg, "performance.history_limit_mb"), 50);
+    arena_free(a);
+}
+
+/* =========================================================================
+ * CMP-187: config_set
+ * ====================================================================== */
+
+TEST(test_config_set_new_key)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    int rc = config_set(cfg, "provider.model", "gpt-4o");
+    ASSERT_EQ(rc, 0);
+    ASSERT_STR_EQ(config_get_str(cfg, "provider.model"), "gpt-4o");
+    arena_free(a);
+}
+
+TEST(test_config_set_overwrite)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "[rendering]\ntarget_fps = 30\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_int(cfg, "rendering.target_fps"), 30);
+    ASSERT_EQ(config_set(cfg, "rendering.target_fps", "120"), 0);
+    ASSERT_EQ(config_get_int(cfg, "rendering.target_fps"), 120);
+    arena_free(a);
+}
+
+TEST(test_config_set_null_safety)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_set(NULL, "k", "v"), -1);
+    ASSERT_EQ(config_set(cfg,  NULL, "v"), -1);
+    arena_free(a);
+}
+
+/* =========================================================================
+ * CMP-187: config_save round-trip
+ * ====================================================================== */
+
+TEST(test_config_save_round_trip)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[provider]\nmodel = \"ollama/llama3\"\n"
+        "[rendering]\ntarget_fps = 30\n"
+        "[theme]\ntrue_color = false\n");
+    ASSERT_NOT_NULL(cfg);
+
+    char path[] = "/tmp/test_config_save_XXXXXX.toml";
+    int fd = mkstemps(path, 5);
+    ASSERT_TRUE(fd >= 0);
+    close(fd);
+    ASSERT_EQ(config_save(cfg, path), 0);
+
+    Arena *a2 = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a2);
+    Config *cfg2 = config_load_path(a2, path);
+    ASSERT_NOT_NULL(cfg2);
+
+    ASSERT_STR_EQ(config_get_str(cfg2, "provider.model"),            "ollama/llama3");
+    ASSERT_EQ(config_get_int(cfg2,  "rendering.target_fps"),         30);
+    ASSERT_EQ(config_get_bool(cfg2, "theme.true_color"),             0);
+    ASSERT_EQ(config_get_bool(cfg2, "behavior.confirm_destructive"), 1);
+
+    unlink(path);
+    arena_free(a);
+    arena_free(a2);
+}
+
+TEST(test_config_save_null_safety)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_save(NULL, "/tmp/x.toml"), -1);
+    ASSERT_EQ(config_save(cfg,  NULL),          -1);
+    arena_free(a);
+}
+
+TEST(test_config_save_custom_key)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_set(cfg, "custom.my_flag", "hello"), 0);
+
+    char path[] = "/tmp/test_config_custom_XXXXXX.toml";
+    int fd = mkstemps(path, 5);
+    ASSERT_TRUE(fd >= 0);
+    close(fd);
+    ASSERT_EQ(config_save(cfg, path), 0);
+
+    Arena *a2 = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a2);
+    Config *cfg2 = config_load_path(a2, path);
+    ASSERT_NOT_NULL(cfg2);
+    ASSERT_STR_EQ(config_get_str(cfg2, "custom.my_flag"), "hello");
+
+    unlink(path);
+    arena_free(a);
+    arena_free(a2);
+}
+
+/* =========================================================================
+ * CMP-187: config_cmd_set
+ * ====================================================================== */
+
+TEST(test_cmd_set_colon_prefix)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_cmd_set(cfg, ":set provider.model gpt-4o-mini"), 0);
+    ASSERT_STR_EQ(config_get_str(cfg, "provider.model"), "gpt-4o-mini");
+    arena_free(a);
+}
+
+TEST(test_cmd_set_bare_key_value)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_cmd_set(cfg, "theme.accent_color blue"), 0);
+    ASSERT_STR_EQ(config_get_str(cfg, "theme.accent_color"), "blue");
+    arena_free(a);
+}
+
+TEST(test_cmd_set_overwrite_existing)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a,
+        "[behavior]\nauto_approve_tools = true\n");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_get_bool(cfg, "behavior.auto_approve_tools"), 1);
+    ASSERT_EQ(config_cmd_set(cfg, ":set behavior.auto_approve_tools false"), 0);
+    ASSERT_EQ(config_get_bool(cfg, "behavior.auto_approve_tools"), 0);
+    arena_free(a);
+}
+
+TEST(test_cmd_set_malformed)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_cmd_set(cfg, ":set provider.model"), -2);
+    ASSERT_EQ(config_cmd_set(cfg, ":set "),               -2);
+    ASSERT_EQ(config_cmd_set(cfg, "   "),                 -2);
+    arena_free(a);
+}
+
+TEST(test_cmd_set_null_safety)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+    Config *cfg = load_str(a, "");
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(config_cmd_set(NULL, ":set k v"), -1);
+    ASSERT_EQ(config_cmd_set(cfg,  NULL),       -1);
+    arena_free(a);
+}
+
 /* =========================================================================
  * main
  * ====================================================================== */
@@ -462,6 +828,39 @@ int main(void)
 
     RUN_TEST(test_missing_file_returns_defaults);
     RUN_TEST(test_system_prompt_append);
+
+    /* CMP-187: new sections -- defaults */
+    RUN_TEST(test_rendering_defaults);
+    RUN_TEST(test_theme_defaults);
+    RUN_TEST(test_layout_defaults);
+    RUN_TEST(test_behavior_defaults);
+    RUN_TEST(test_keys_defaults);
+    RUN_TEST(test_performance_defaults);
+
+    /* CMP-187: new sections -- TOML parsing */
+    RUN_TEST(test_rendering_parse);
+    RUN_TEST(test_theme_parse);
+    RUN_TEST(test_layout_parse);
+    RUN_TEST(test_behavior_parse);
+    RUN_TEST(test_keys_parse);
+    RUN_TEST(test_performance_parse);
+
+    /* CMP-187: config_set */
+    RUN_TEST(test_config_set_new_key);
+    RUN_TEST(test_config_set_overwrite);
+    RUN_TEST(test_config_set_null_safety);
+
+    /* CMP-187: config_save round-trip */
+    RUN_TEST(test_config_save_round_trip);
+    RUN_TEST(test_config_save_null_safety);
+    RUN_TEST(test_config_save_custom_key);
+
+    /* CMP-187: config_cmd_set */
+    RUN_TEST(test_cmd_set_colon_prefix);
+    RUN_TEST(test_cmd_set_bare_key_value);
+    RUN_TEST(test_cmd_set_overwrite_existing);
+    RUN_TEST(test_cmd_set_malformed);
+    RUN_TEST(test_cmd_set_null_safety);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

@@ -97,7 +97,9 @@ TEST(test_defaults_when_empty)
     Config *cfg = load_str(a, "");
     ASSERT_NOT_NULL(cfg);
 
-    ASSERT_STR_EQ(config_get_str(cfg,  "provider.base_url"),  "https://api.anthropic.com");
+    ASSERT_STR_EQ(config_get_str(cfg,  "provider.type"),      "claude");
+    ASSERT_STR_EQ(config_get_str(cfg,  "provider.base_url"),  "api.anthropic.com");
+    ASSERT_EQ    (config_get_int(cfg,  "provider.port"),      0);
     ASSERT_STR_EQ(config_get_str(cfg,  "provider.model"),     "claude-opus-4-6");
     ASSERT_EQ    (config_get_int(cfg,  "provider.timeout_ms"), 30000);
     ASSERT_EQ    (config_get_bool(cfg, "sandbox.enabled"),          1);
@@ -405,7 +407,7 @@ TEST(test_missing_file_returns_defaults)
     ASSERT_NOT_NULL(cfg);
 
     /* Falls back to compiled-in defaults. */
-    ASSERT_STR_EQ(config_get_str(cfg, "provider.base_url"), "https://api.anthropic.com");
+    ASSERT_STR_EQ(config_get_str(cfg, "provider.base_url"), "api.anthropic.com");
     ASSERT_EQ    (config_get_int(cfg, "provider.timeout_ms"), 30000);
 
     /* Clean up the file that config_load_path may have created. */

@@ -100,9 +100,13 @@ TEST(test_defaults_when_empty)
     ASSERT_STR_EQ(config_get_str(cfg,  "provider.base_url"),  "https://api.anthropic.com");
     ASSERT_STR_EQ(config_get_str(cfg,  "provider.model"),     "claude-opus-4-6");
     ASSERT_EQ    (config_get_int(cfg,  "provider.timeout_ms"), 30000);
-    ASSERT_EQ    (config_get_bool(cfg, "sandbox.enabled"),     1);
-    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.profile"),    "strict");
-    ASSERT_STR_EQ(config_get_str(cfg,  "ui.theme"),           "dark");
+    ASSERT_EQ    (config_get_bool(cfg, "sandbox.enabled"),          1);
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.profile"),         "strict");
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.allowed_paths"),   "");
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.allowed_commands"),"");
+    ASSERT_EQ    (config_get_bool(cfg, "sandbox.network"),          0);
+    ASSERT_EQ    (config_get_int(cfg,  "sandbox.max_file_size"),    10485760);
+    ASSERT_STR_EQ(config_get_str(cfg,  "ui.theme"),                "dark");
     ASSERT_EQ    (config_get_bool(cfg, "ui.word_wrap"),        1);
     ASSERT_EQ    (config_get_int(cfg,  "ui.stream_delay_ms"),  0);
 
@@ -791,6 +795,49 @@ TEST(test_cmd_set_null_safety)
 }
 
 /* =========================================================================
+ * CMP-199: sandbox config keys — TOML round-trip
+ * ====================================================================== */
+
+TEST(test_sandbox_new_keys_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+
+    Config *cfg = load_str(a,
+        "[sandbox]\n"
+        "allowed_paths    = \"/tmp:/var\"\n"
+        "allowed_commands = \"ls:cat\"\n"
+        "network          = true\n"
+        "max_file_size    = 2097152\n");
+    ASSERT_NOT_NULL(cfg);
+
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.allowed_paths"),    "/tmp:/var");
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.allowed_commands"), "ls:cat");
+    ASSERT_EQ    (config_get_bool(cfg, "sandbox.network"),           1);
+    ASSERT_EQ    (config_get_int(cfg,  "sandbox.max_file_size"),     2097152);
+
+    arena_free(a);
+}
+
+TEST(test_sandbox_new_keys_defaults_when_absent)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+
+    /* Load a config with only non-sandbox keys — new keys must fall back
+     * to compiled-in defaults. */
+    Config *cfg = load_str(a, "[provider]\nmodel = \"test\"\n");
+    ASSERT_NOT_NULL(cfg);
+
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.allowed_paths"),    "");
+    ASSERT_STR_EQ(config_get_str(cfg,  "sandbox.allowed_commands"), "");
+    ASSERT_EQ    (config_get_bool(cfg, "sandbox.network"),           0);
+    ASSERT_EQ    (config_get_int(cfg,  "sandbox.max_file_size"),     10485760);
+
+    arena_free(a);
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -861,6 +908,10 @@ int main(void)
     RUN_TEST(test_cmd_set_overwrite_existing);
     RUN_TEST(test_cmd_set_malformed);
     RUN_TEST(test_cmd_set_null_safety);
+
+    /* CMP-199: sandbox new config keys */
+    RUN_TEST(test_sandbox_new_keys_parse);
+    RUN_TEST(test_sandbox_new_keys_defaults_when_absent);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

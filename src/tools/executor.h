@@ -16,13 +16,20 @@
 
 /*
  * Execution mode — controls which tools are permitted to run.
- * EXEC_MODE_NORMAL : all registered tools may be invoked.
- * EXEC_MODE_PLAN   : write/execute tools (bash, write_file, edit_file) are
- *                    blocked; the model may only read and reason.
+ * EXEC_MODE_NORMAL   : all registered tools may be invoked.
+ * EXEC_MODE_PLAN     : write/execute tools (bash, write_file, edit_file) are
+ *                      blocked; the model may only read and reason.
+ * EXEC_MODE_DRY_RUN  : no tool is actually executed; every call returns a
+ *                      synthetic {"dry_run":true} result and a log line is
+ *                      emitted to stderr.
+ * EXEC_MODE_READONLY : write/execute tools (bash, write_file, edit_file) are
+ *                      blocked with an error; read tools run normally.
  */
 typedef enum {
-    EXEC_MODE_NORMAL = 0,
-    EXEC_MODE_PLAN   = 1
+    EXEC_MODE_NORMAL   = 0,
+    EXEC_MODE_PLAN     = 1,
+    EXEC_MODE_DRY_RUN  = 2,
+    EXEC_MODE_READONLY = 3
 } ExecMode;
 
 void     executor_set_mode(ExecMode mode);

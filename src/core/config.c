@@ -43,6 +43,7 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     /* [sandbox] */
     { "sandbox.enabled",               "true"                      },
     { "sandbox.profile",               "strict"                    },
+    { "sandbox.mode",                  ""                          },
     { "sandbox.allowed_paths",         ""                          },
     { "sandbox.allowed_commands",      ""                          },
     { "sandbox.denied_commands",       ""                          },

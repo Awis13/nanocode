@@ -21,8 +21,9 @@
 #include "../src/core/loop.h"
 #include "../src/util/arena.h"
 #include "../src/util/duration.h"
-#include "../src/tools/fileops.h"
 #include "../src/tools/bash.h"
+#include "../src/tools/executor.h"
+#include "../src/tools/fileops.h"
 
 static volatile sig_atomic_t g_running = 1;
 static Loop *g_loop = NULL;
@@ -83,6 +84,8 @@ int main(int argc, char **argv)
     int         cli_json            = 0;
     int         cli_sandbox         = 0;
     int         cli_daemon          = 0;
+    int         cli_dry_run         = 0;
+    int         cli_readonly        = 0;
     const char *cli_sandbox_profile = NULL;
     char        cli_timeout_arg[64] = "";
 
@@ -109,6 +112,10 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--daemon") == 0) {
             cli_daemon = 1;
+        } else if (strcmp(argv[i], "--dry-run") == 0) {
+            cli_dry_run = 1;
+        } else if (strcmp(argv[i], "--readonly") == 0) {
+            cli_readonly = 1;
         } else if (strcmp(argv[i], "--sandbox") == 0) {
             cli_sandbox = 1;
         } else if (strcmp(argv[i], "--sandbox-profile") == 0) {
@@ -147,6 +154,21 @@ int main(int argc, char **argv)
         config_set(cfg, "sandbox.enabled", "true");
     if (cli_sandbox_profile)
         config_set(cfg, "sandbox.profile", cli_sandbox_profile);
+
+    /* Resolve execution mode: config key first, then CLI flags (higher priority). */
+    {
+        ExecMode exec_mode = EXEC_MODE_NORMAL;
+        const char *cfg_mode = config_get_str(cfg, "sandbox.mode");
+        if (cfg_mode && strcmp(cfg_mode, "dry-run") == 0)
+            exec_mode = EXEC_MODE_DRY_RUN;
+        else if (cfg_mode && strcmp(cfg_mode, "readonly") == 0)
+            exec_mode = EXEC_MODE_READONLY;
+        if (cli_dry_run)
+            exec_mode = EXEC_MODE_DRY_RUN;
+        if (cli_readonly)
+            exec_mode = EXEC_MODE_READONLY;
+        executor_set_mode(exec_mode);
+    }
 
     /* -----------------------------------------------------------------------
      * Phase 3: Validate and activate sandbox.

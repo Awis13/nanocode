@@ -54,7 +54,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_editor \
              tests/test_session_timeout \
              tests/test_json_output \
-             tests/test_status_file tests/test_daemon
+             tests/test_status_file tests/test_daemon \
+             tests/test_dryrun
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -190,6 +191,11 @@ tests/test_status_file: tests/test_status_file.c src/core/status_file.c
 
 # CMP-216-A: daemon — Unix socket create/destroy/protocol
 tests/test_daemon: tests/test_daemon.c src/core/daemon.c src/core/loop.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-226: --dry-run and --readonly execution modes
+tests/test_dryrun: tests/test_dryrun.c src/tools/executor.c src/util/arena.c \
+                   src/core/status_file.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

@@ -93,6 +93,36 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
     assert(arena != NULL);
     assert(name  != NULL);
 
+    /* Dry-run mode: skip execution, return synthetic result. */
+    if (s_exec_mode == EXEC_MODE_DRY_RUN) {
+        fprintf(stderr, "[dry-run] would call: %s(%s)\n",
+                name, args_json ? args_json : "{}");
+        static const char msg[] = "{\"dry_run\":true}";
+        size_t mlen = sizeof(msg) - 1;
+        char  *buf  = arena_alloc(arena, mlen + 1);
+        if (buf) memcpy(buf, msg, mlen + 1);
+        ToolResult r = { .error = 0, .content = buf, .len = mlen };
+        return r;
+    }
+
+    /* Readonly mode: block write/execute tools. */
+    if (s_exec_mode == EXEC_MODE_READONLY) {
+        static const char *const s_ro_blocked[] = {
+            "bash", "write_file", "edit_file", NULL
+        };
+        for (int j = 0; s_ro_blocked[j]; j++) {
+            if (strcmp(name, s_ro_blocked[j]) == 0) {
+                static const char msg[] =
+                    "{\"error\":\"blocked in readonly mode\"}";
+                size_t mlen = sizeof(msg) - 1;
+                char  *buf  = arena_alloc(arena, mlen + 1);
+                if (buf) memcpy(buf, msg, mlen + 1);
+                ToolResult r = { .error = 1, .content = buf, .len = mlen };
+                return r;
+            }
+        }
+    }
+
     /* Plan mode: block write/execute tools. */
     if (s_exec_mode == EXEC_MODE_PLAN) {
         static const char *const s_blocked[] = {

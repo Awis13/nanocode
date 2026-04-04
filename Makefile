@@ -102,7 +102,7 @@ tests/test_oom: tests/test_oom.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-144: retry/backoff — requires src/api/retry.c implementation
-tests/test_retry: tests/test_retry.c src/api/retry.c
+tests/test_retry: tests/test_retry.c src/api/retry.c src/api/thinking.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-118: conversation manager
@@ -224,15 +224,16 @@ $(BIN): $(OBJS)
 # test_stream — Phase 1 validation binary
 # ---------------------------------------------------------------------------
 
-TEST_STREAM_SRCS := bin/test_stream.c  \
-                    src/core/loop.c    \
-                    src/util/arena.c   \
-                    src/util/buf.c     \
-                    src/util/json.c    \
-                    src/api/client.c   \
-                    src/api/retry.c    \
-                    src/api/tls_ca.c   \
-                    src/api/sse.c      \
+TEST_STREAM_SRCS := bin/test_stream.c    \
+                    src/core/loop.c      \
+                    src/util/arena.c     \
+                    src/util/buf.c       \
+                    src/util/json.c      \
+                    src/api/client.c     \
+                    src/api/retry.c      \
+                    src/api/tls_ca.c     \
+                    src/api/sse.c        \
+                    src/api/thinking.c   \
                     src/api/provider.c
 
 test_stream: bearssl $(TEST_STREAM_SRCS)

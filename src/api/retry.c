@@ -1,8 +1,10 @@
 /*
  * retry.c — HTTP retry / exponential backoff (CMP-144)
+ *           and max_output_tokens continuation retry (CMP-304)
  */
 
 #include "retry.h"
+#include <string.h>
 
 RetryConfig retry_config_default(void)
 {
@@ -45,4 +47,11 @@ int retry_next_delay_ms(const RetryConfig *cfg, int attempt, int retry_after_s)
     }
 
     return (int)delay;
+}
+
+int retry_should_continue(const char *stop_reason)
+{
+    if (!stop_reason)
+        return 0;
+    return strcmp(stop_reason, "max_tokens") == 0 ? 1 : 0;
 }

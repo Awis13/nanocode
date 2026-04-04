@@ -25,6 +25,7 @@ typedef struct {
     const char  *schema_json;
     ToolHandler  fn;
     ToolSafety   safety;
+    int          is_builtin; /* 1 = built-in (excluded from tool_names_json) */
 } ToolEntry;
 
 static ToolEntry s_registry[TOOL_REGISTRY_MAX];
@@ -72,6 +73,7 @@ void tool_register(const char *name, const char *schema_json, ToolHandler fn,
     s_registry[s_count].schema_json = schema_json;
     s_registry[s_count].fn          = fn;
     s_registry[s_count].safety      = safety;
+    s_registry[s_count].is_builtin  = 0;
     s_count++;
 }
 
@@ -456,6 +458,9 @@ void tool_search_register(void)
 {
     tool_register("tool_search", s_tool_search_schema, tool_search_handler,
                   TOOL_SAFE_READONLY);
+    /* Mark as built-in so tool_names_json omits it from the name-stub list. */
+    if (s_count > 0)
+        s_registry[s_count - 1].is_builtin = 1;
 }
 
 /* -------------------------------------------------------------------------

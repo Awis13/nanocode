@@ -90,6 +90,7 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json);
 
 /*
  * Reset the registry — useful in tests to start from a clean state.
+ * Also clears the built-in tool_search registration.
  */
 void tool_registry_reset(void);
 
@@ -124,6 +125,21 @@ char *tool_schemas_json(Arena *arena);
  * Pointers are into static storage — do not free.
  */
 int tool_list_names(const char **names, int max_names);
+
+/*
+ * Returns JSON array of name-only stubs: [{"name":"bash"}, {"name":"read"}, ...]
+ * Does NOT include tool_search in this list.
+ * Used for the initial API request to save ~2K tokens.
+ * Returns arena-allocated NUL-terminated string, or NULL on allocation failure.
+ */
+char *tool_names_json(Arena *arena);
+
+/*
+ * Returns JSON array of full schemas for all registered tools.
+ * (explicit "full schema" path, includes all registered tools)
+ * Returns arena-allocated NUL-terminated string, or NULL on allocation failure.
+ */
+char *tool_schemas_json(Arena *arena);
 
 /*
  * Serialize a ToolResult into a Claude-compatible tool_result block:
@@ -161,5 +177,19 @@ typedef enum {
 typedef void (*tool_event_cb)(ToolEvent ev, void *ctx);
 
 void executor_set_tool_event_cb(tool_event_cb cb, void *ctx);
+
+/*
+ * executor_invoke — audit-aware wrapper around tool_invoke.
+ * Measures wall-clock duration and emits an audit_tool_call() entry when
+ * an audit log has been configured via executor_set_audit().
+ */
+ToolResult executor_invoke(Arena *arena, const char *name, const char *args_json);
+
+/*
+ * Configure the audit log used by executor_invoke.
+ * Passing NULL for log disables audit recording.
+ */
+void executor_set_audit(struct AuditLog *log, const char *session_id,
+                        const char *sandbox_profile, const char *cwd);
 
 #endif /* EXECUTOR_H */

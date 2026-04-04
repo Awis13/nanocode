@@ -119,12 +119,64 @@ Combine with `--json` for machine-readable output:
 echo "Fix the null dereference in src/api/client.c" | nanocode --pipe --json
 ```
 
+
+## Local Models
+
+nanocode works with any OpenAI-compatible local inference server.
+
+### Gemma 4 via Ollama
+
+Gemma 4 (`gemma4`) supports a 128K context window and native function calling.
+
+```bash
+ollama pull gemma4
+```
+
+Configure `~/.nanocode/config.toml`:
+
+```toml
+[provider]
+type     = "ollama"
+base_url = "localhost"
+model    = "gemma4"
+port     = 11434
+
+[behavior]
+max_context_tokens = 128000
+```
+
+### Gemma 4 via vLLM / LM Studio (OpenAI-compatible)
+
+```toml
+[provider]
+type     = "openai"
+base_url = "localhost"
+model    = "google/gemma-4"
+port     = 8000
+
+[behavior]
+max_context_tokens = 128000
+```
+
+No API key is required for local endpoints.
+
+### Other local models
+
+| Model | Provider type | max_context_tokens |
+|-------|---------------|--------------------|
+| `gemma4` | ollama | 128000 |
+| `qwen2.5:9b` | ollama | 32000 |
+| `qwen3:8b` | ollama | 128000 |
+| `llama3.1:8b` | ollama | 32000 |
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `NANOCODE_JSON` | Set to `1` to enable JSON output mode when stdout is not a TTY |
 | `NANOCODE_API_KEY` | API key for the configured provider (overrides config file) |
+| `NANOCODE_MODEL` | Override model ID at runtime (e.g., `gemma4`, `gpt-4o`) |
+| `NANOCODE_BASE_URL` | Override provider base URL at runtime |
 | `VISUAL` | Preferred terminal editor (used by `nanocode edit`) |
 | `EDITOR` | Fallback editor if `VISUAL` is not set |
 

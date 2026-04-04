@@ -21,7 +21,7 @@
 /* Provider token limits (configurable at runtime via ctx_truncate max_tokens). */
 #define CTX_MAX_TOKENS_CLAUDE  180000
 #define CTX_MAX_TOKENS_OPENAI  128000
-#define CTX_MAX_TOKENS_OLLAMA   32000   /* Qwen 3.5 supports 32K-128K; use 32K as safe default */
+#define CTX_MAX_TOKENS_OLLAMA  128000   /* Gemma 4 / Qwen 3 support 128K; configurable via behavior.max_context_tokens */
 
 /*
  * Estimate token count for a NUL-terminated string.

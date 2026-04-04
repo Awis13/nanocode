@@ -60,7 +60,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_dryrun \
              tests/test_oneshot \
              tests/test_pet \
-             tests/test_commands
+             tests/test_commands \
+             tests/test_pipe
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -218,6 +219,10 @@ tests/test_oneshot: tests/test_oneshot.c src/core/oneshot.c
 tests/test_commands: tests/test_commands.c src/tui/commands.c \
                      src/agent/conversation.c src/tools/diff_sandbox.c \
                      src/util/arena.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-188: Unix pipe mode — provider resolution and stdin buffering
+tests/test_pipe: tests/test_pipe.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

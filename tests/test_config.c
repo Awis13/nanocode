@@ -97,7 +97,9 @@ TEST(test_defaults_when_empty)
     Config *cfg = load_str(a, "");
     ASSERT_NOT_NULL(cfg);
 
-    ASSERT_STR_EQ(config_get_str(cfg,  "provider.base_url"),  "https://api.anthropic.com");
+    ASSERT_STR_EQ(config_get_str(cfg,  "provider.type"),      "claude");
+    ASSERT_STR_EQ(config_get_str(cfg,  "provider.base_url"),  "api.anthropic.com");
+    ASSERT_EQ    (config_get_int(cfg,  "provider.port"),      0);
     ASSERT_STR_EQ(config_get_str(cfg,  "provider.model"),     "claude-opus-4-6");
     ASSERT_EQ    (config_get_int(cfg,  "provider.timeout_ms"), 30000);
     ASSERT_EQ    (config_get_bool(cfg, "sandbox.enabled"),          1);
@@ -405,7 +407,7 @@ TEST(test_missing_file_returns_defaults)
     ASSERT_NOT_NULL(cfg);
 
     /* Falls back to compiled-in defaults. */
-    ASSERT_STR_EQ(config_get_str(cfg, "provider.base_url"), "https://api.anthropic.com");
+    ASSERT_STR_EQ(config_get_str(cfg, "provider.base_url"), "api.anthropic.com");
     ASSERT_EQ    (config_get_int(cfg, "provider.timeout_ms"), 30000);
 
     /* Clean up the file that config_load_path may have created. */
@@ -838,6 +840,26 @@ TEST(test_sandbox_new_keys_defaults_when_absent)
 }
 
 /* =========================================================================
+ * CMP-228: provider.type and provider.port TOML round-trip
+ * ====================================================================== */
+
+TEST(test_provider_type_ollama_parse)
+{
+    Arena *a = arena_new(1 << 17);
+    ASSERT_NOT_NULL(a);
+
+    Config *cfg = load_str(a,
+        "[provider]\n"
+        "type = \"ollama\"\n"
+        "port = 11434\n");
+    ASSERT_NOT_NULL(cfg);
+
+    ASSERT_STR_EQ(config_get_str(cfg, "provider.type"), "ollama");
+    ASSERT_EQ    (config_get_int(cfg, "provider.port"), 11434);
+    arena_free(a);
+}
+
+/* =========================================================================
  * CMP-244: pet config — parsing, defaults, set/override, validation
  * ====================================================================== */
 
@@ -1039,6 +1061,9 @@ int main(void)
     RUN_TEST(test_sandbox_new_keys_parse);
     RUN_TEST(test_sandbox_new_keys_defaults_when_absent);
 
+    /* CMP-228: provider.type and provider.port TOML round-trip */
+    /* CMP-228: provider.type and provider.port TOML round-trip */
+    RUN_TEST(test_provider_type_ollama_parse);
     /* CMP-244: pet config */
     RUN_TEST(test_pet_config_default);
     RUN_TEST(test_pet_config_parse_cat);

@@ -117,6 +117,195 @@ static const char *daemon_dispatch_stub(const char *prompt, const char *cwd,
 }
 
 /* -------------------------------------------------------------------------
+ * REPL coordinator — wires input → provider → renderer
+ *
+ * ReplSession holds all per-session state.  Callbacks are registered with
+ * the provider and input layer; they drive state transitions, token
+ * rendering, tool dispatch, and re-streaming until the model reaches
+ * end_turn.
+ * ---------------------------------------------------------------------- */
+
+typedef struct {
+    Loop                 *loop;
+    Provider             *provider;
+    Conversation         *conv;
+    Arena                *arena;        /* session-long arena (not owned) */
+    const ProviderConfig *pcfg;
+    Buf                   resp_buf;     /* accumulates text tokens per turn */
+    ToolCall             *pending;      /* heap-allocated tool-call array */
+    int                   npending;
+    int                   pending_cap;
+    InputCtx             *input_ctx;
+} ReplSession;
+
+static ReplSession g_rs;
+
+/* Forward declarations */
+static void repl_on_done(int error, const char *stop_reason, void *ctx);
+static int  repl_start_stream(ReplSession *rs);
+
+static void repl_free_pending(ReplSession *rs)
+{
+    for (int i = 0; i < rs->npending; i++) {
+        free(rs->pending[i].id);
+        free(rs->pending[i].name);
+        free(rs->pending[i].input);
+    }
+    rs->npending = 0;
+}
+
+static void repl_on_token(const char *tok, size_t len, void *ctx)
+{
+    ReplSession *rs = ctx;
+    repl_transition(&g_repl_ctx, REPL_STREAMING);
+    if (g_renderer)
+        renderer_token(g_renderer, tok, len);
+    buf_append(&rs->resp_buf, tok, len);
+    g_sb_out_tok++;
+}
+
+static void repl_on_tool(const char *id, const char *name,
+                          const char *input, void *ctx)
+{
+    ReplSession *rs = ctx;
+    if (rs->npending >= rs->pending_cap) {
+        int new_cap = rs->pending_cap ? rs->pending_cap * 2 : 4;
+        ToolCall *arr = realloc(rs->pending,
+                                (size_t)new_cap * sizeof(ToolCall));
+        if (!arr)
+            return;
+        rs->pending     = arr;
+        rs->pending_cap = new_cap;
+    }
+    ToolCall *tc = &rs->pending[rs->npending++];
+    tc->id    = strdup(id);
+    tc->name  = strdup(name);
+    tc->input = strdup(input);
+}
+
+static void repl_on_done(int error, const char *stop_reason, void *ctx)
+{
+    (void)stop_reason;
+    ReplSession *rs = ctx;
+
+    /* Flush any partial rendered output. */
+    if (g_renderer)
+        renderer_flush(g_renderer);
+
+    if (error) {
+        fprintf(stderr, "\nnanocode: stream error\n");
+        repl_transition(&g_repl_ctx, REPL_PROMPT);
+        buf_reset(&rs->resp_buf);
+        repl_free_pending(rs);
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        return;
+    }
+
+    /* Record accumulated text as assistant turn. */
+    if (rs->resp_buf.len > 0) {
+        const char *text = buf_str(&rs->resp_buf);
+        conv_add(rs->conv, "assistant", text);
+        buf_reset(&rs->resp_buf);
+    }
+
+    /* Tool calls pending — dispatch synchronously, then re-stream. */
+    if (rs->npending > 0) {
+        repl_transition(&g_repl_ctx, REPL_TOOL_EXEC);
+        /* tool_dispatch_all records tool_use + tool_result turns in conv.
+         * The pending strings are strdup'd; they survive the call and are
+         * freed immediately after. */
+        tool_dispatch_all(rs->pending, rs->npending, rs->conv, rs->arena);
+        repl_free_pending(rs);
+        if (repl_start_stream(rs) != 0) {
+            repl_transition(&g_repl_ctx, REPL_PROMPT);
+            if (rs->input_ctx)
+                input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        }
+        return;
+    }
+
+    /* Turn complete — return to prompt. */
+    repl_transition(&g_repl_ctx, REPL_DONE);
+    repl_transition(&g_repl_ctx, REPL_PROMPT);
+    if (rs->input_ctx)
+        input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+}
+
+static int repl_start_stream(ReplSession *rs)
+{
+    repl_transition(&g_repl_ctx, REPL_THINKING);
+
+    /*
+     * Build the message array from the conversation.  Use an ephemeral
+     * arena so the array doesn't permanently occupy the session arena.
+     * provider_stream() copies everything it needs before returning.
+     */
+    Arena *tmp = arena_new(256 * 1024);
+    if (!tmp)
+        return -1;
+
+    int      nmsg = 0;
+    Message *msgs = conv_to_messages(rs->conv, &nmsg, tmp);
+    if (!msgs || nmsg == 0) {
+        arena_free(tmp);
+        return -1;
+    }
+
+    int rc = provider_stream(rs->provider, msgs, nmsg,
+                             repl_on_token, repl_on_tool, repl_on_done, rs);
+    arena_free(tmp);
+    return rc;
+}
+
+static void repl_line_cb(InputLine line, void *userdata)
+{
+    ReplSession *rs = userdata;
+
+    /* EOF (Ctrl+D) — stop the loop. */
+    if (line.is_eof) {
+        loop_stop(rs->loop);
+        return;
+    }
+
+    /* Empty line — re-show prompt. */
+    if (line.len == 0) {
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        return;
+    }
+
+    input_history_add(line.text);
+
+    /* Slash commands. */
+    if (cmd_is_command(line.text)) {
+        char *model_ptr = (char *)(uintptr_t)rs->pcfg->model;
+        CmdContext cctx = {
+            .conv    = rs->conv,
+            .model   = &model_ptr,
+            .in_tok  = g_sb_in_tok,
+            .out_tok = g_sb_out_tok,
+            .fd_out  = STDOUT_FILENO,
+            .fd_in   = STDIN_FILENO,
+        };
+        cmd_dispatch(line.text, &cctx);
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        return;
+    }
+
+    /* Normal user message — add to conversation and stream. */
+    conv_add(rs->conv, "user", line.text);
+    g_sb_in_tok++;
+
+    if (repl_start_stream(rs) != 0) {
+        fprintf(stderr, "nanocode: failed to start stream\n");
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+    }
+}
+
+/* -------------------------------------------------------------------------
  * One-shot streaming callbacks and execution
  * ---------------------------------------------------------------------- */
 
@@ -672,8 +861,6 @@ int main(int argc, char **argv)
                 printf("Loaded %d turns from history.\n", resume_conv->nturn);
         }
     }
-    (void)resume_conv; /* wired into session coordinator once TUI is complete */
-
     /* -----------------------------------------------------------------------
      * Phase 5: TUI status bar + pet animation (interactive sessions only).
      * ---------------------------------------------------------------------- */

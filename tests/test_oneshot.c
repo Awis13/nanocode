@@ -67,6 +67,21 @@ TEST(test_parse_unrecognized)
     ASSERT_EQ(idx, 1);          /* index not advanced */
 }
 
+TEST(test_parse_c_stdin_dash)
+{
+    /* "-c -" should enable oneshot with command set to "-" (stdin sentinel). */
+    char *argv[] = { "nanocode", "-c", "-" };
+    int argc = 3, idx = 1;
+    OneShotFlags f = {0};
+    char err[64];
+
+    int rc = oneshot_parse_arg(argc, argv, &idx, &f, err, sizeof(err));
+    ASSERT_EQ(rc, 1);
+    ASSERT_EQ(f.enabled, 1);
+    ASSERT_STR_EQ(f.command, "-");
+    ASSERT_EQ(idx, 2);
+}
+
 TEST(test_parse_c_missing_arg)
 {
     char *argv[] = { "nanocode", "-c" };
@@ -171,6 +186,7 @@ int main(void)
     RUN_TEST(test_parse_long_command);
     RUN_TEST(test_parse_auto_apply);
     RUN_TEST(test_parse_unrecognized);
+    RUN_TEST(test_parse_c_stdin_dash);
     RUN_TEST(test_parse_c_missing_arg);
     RUN_TEST(test_parse_command_missing_arg);
     RUN_TEST(test_parse_combined_flags);

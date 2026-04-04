@@ -14,6 +14,29 @@
 void fileops_register_all(void);
 
 /*
+ * Confirmation callback — called before each write_file or edit_file
+ * operation with the affected path, the existing content (NULL for new
+ * files), and the proposed new content.
+ *
+ * Return values:
+ *   > 0  apply this change and keep the callback active for future writes
+ *     0  reject this change (tool returns an error to the model)
+ *   < 0  apply this change AND disable the callback (apply-all from here)
+ *
+ * The callback must not modify the string arguments.
+ */
+typedef int (*fileops_confirm_cb)(const char *path,
+                                  const char *old_content,
+                                  const char *new_content,
+                                  void *ctx);
+
+/*
+ * Register a confirmation callback.  Pass cb=NULL to remove any existing
+ * callback and revert to silent auto-apply behaviour (the default).
+ */
+void fileops_set_confirm_cb(fileops_confirm_cb cb, void *ctx);
+
+/*
  * Configure per-session resource limits.  Call once from main() after
  * config is loaded.  Resets the session file counter to zero.
  *

@@ -421,6 +421,166 @@ TEST(test_prompt_sandbox_null_sc_no_block)
 }
 
 /* -------------------------------------------------------------------------
+ * prompt_build_parts — static/dynamic split
+ * ---------------------------------------------------------------------- */
+
+TEST(test_parts_null_arena)
+{
+    PromptParts p = prompt_build_parts(NULL, "/tmp", NULL, NULL, 0);
+    ASSERT_NULL(p.static_part);
+    ASSERT_NULL(p.dynamic_part);
+}
+
+TEST(test_parts_null_cwd)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, NULL, NULL, NULL, 0);
+    ASSERT_NULL(p.static_part);
+    ASSERT_NULL(p.dynamic_part);
+
+    arena_free(a);
+}
+
+TEST(test_parts_static_contains_identity)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    ASSERT_NOT_NULL(p.static_part);
+    ASSERT_NOT_NULL(strstr(p.static_part, "nanocode"));
+
+    arena_free(a);
+}
+
+TEST(test_parts_dynamic_contains_cwd)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp/test_cwd_dir", NULL, NULL, 0);
+    ASSERT_NOT_NULL(p.dynamic_part);
+    ASSERT_NOT_NULL(strstr(p.dynamic_part, "/tmp/test_cwd_dir"));
+
+    arena_free(a);
+}
+
+TEST(test_parts_identity_not_in_dynamic)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    ASSERT_NOT_NULL(p.dynamic_part);
+    /* Base identity belongs in the static section only. */
+    ASSERT_NULL(strstr(p.dynamic_part, "You are nanocode"));
+
+    arena_free(a);
+}
+
+TEST(test_parts_tools_in_static)
+{
+    tool_registry_reset();
+    tool_register("bash", "{}", dummy_handler, TOOL_SAFE_MUTATING);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    ASSERT_NOT_NULL(p.static_part);
+    ASSERT_NOT_NULL(strstr(p.static_part, "bash"));
+    /* Tools section must NOT be duplicated in the dynamic section. */
+    ASSERT_NULL(strstr(p.dynamic_part, "Available Tools"));
+
+    tool_registry_reset();
+    arena_free(a);
+}
+
+TEST(test_parts_sandbox_in_static)
+{
+    SandboxConfig sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.enabled          = 1;
+    sc.profile          = "strict";
+    sc.allowed_paths    = "/tmp";
+    sc.allowed_commands = "ls";
+    sc.network          = 0;
+    sc.max_file_size    = 1048576;
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, &sc, 0);
+    ASSERT_NOT_NULL(p.static_part);
+    ASSERT_NOT_NULL(strstr(p.static_part, "<sandbox_policy>"));
+    /* Sandbox block must NOT appear in the dynamic section. */
+    ASSERT_NULL(strstr(p.dynamic_part, "<sandbox_policy>"));
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
+ * Budget hint injection
+ * ---------------------------------------------------------------------- */
+
+TEST(test_budget_hint_zero_absent)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    ASSERT_NOT_NULL(p.dynamic_part);
+    ASSERT_NULL(strstr(p.dynamic_part, "budget"));
+
+    arena_free(a);
+}
+
+TEST(test_budget_hint_present_when_nonzero)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 8192);
+    ASSERT_NOT_NULL(p.dynamic_part);
+    ASSERT_NOT_NULL(strstr(p.dynamic_part, "8192"));
+
+    arena_free(a);
+}
+
+TEST(test_budget_hint_not_in_static)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 4096);
+    ASSERT_NOT_NULL(p.static_part);
+    ASSERT_NULL(strstr(p.static_part, "4096"));
+
+    arena_free(a);
+}
+
+TEST(test_prompt_build_concatenates_parts)
+{
+    /* prompt_build() must return a string that contains content from
+     * both the static and dynamic sections. */
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    tool_registry_reset();
+    tool_register("grep", "{}", dummy_handler, TOOL_SAFE_READONLY);
+
+    char *p = prompt_build(a, "/tmp/concat_test_dir", NULL, NULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_NOT_NULL(strstr(p, "nanocode"));           /* from static */
+    ASSERT_NOT_NULL(strstr(p, "/tmp/concat_test_dir")); /* from dynamic */
+
+    tool_registry_reset();
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
 
@@ -455,6 +615,21 @@ int main(void)
     RUN_TEST(test_prompt_sandbox_block_injected_when_enabled);
     RUN_TEST(test_prompt_sandbox_block_absent_when_disabled);
     RUN_TEST(test_prompt_sandbox_null_sc_no_block);
+
+    /* prompt_build_parts — static/dynamic split */
+    RUN_TEST(test_parts_null_arena);
+    RUN_TEST(test_parts_null_cwd);
+    RUN_TEST(test_parts_static_contains_identity);
+    RUN_TEST(test_parts_dynamic_contains_cwd);
+    RUN_TEST(test_parts_identity_not_in_dynamic);
+    RUN_TEST(test_parts_tools_in_static);
+    RUN_TEST(test_parts_sandbox_in_static);
+
+    /* Budget hint */
+    RUN_TEST(test_budget_hint_zero_absent);
+    RUN_TEST(test_budget_hint_present_when_nonzero);
+    RUN_TEST(test_budget_hint_not_in_static);
+    RUN_TEST(test_prompt_build_concatenates_parts);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

@@ -281,7 +281,8 @@ static void json_escape(Buf *b, const char *s)
 
 static int build_claude_body(Buf *b, const char *model,
                               const Message *msgs, int nmsg,
-                              int thinking_budget)
+                              int thinking_budget,
+                              const char *system_cache_static)
 {
     buf_append_str(b, "{\"model\":\"");
     json_escape(b, model);
@@ -306,12 +307,30 @@ static int build_claude_body(Buf *b, const char *model,
     buf_append_str(b, max_tokens_str);
     buf_append_str(b, ",\"stream\":true");
 
-    /* Scan for a system role message and emit it as the top-level field. */
+    /* Scan for a system role message and emit it as the top-level field.
+     *
+     * When system_cache_static is non-NULL we use the array format with a
+     * cache_control boundary between the static and dynamic portions:
+     *   "system": [
+     *     {"type":"text","text":"<static>","cache_control":{"type":"ephemeral"}},
+     *     {"type":"text","text":"<dynamic>"}
+     *   ]
+     * Otherwise we fall back to the simple string format. */
     for (int i = 0; i < nmsg; i++) {
         if (msgs[i].role && strcmp(msgs[i].role, "system") == 0) {
-            buf_append_str(b, ",\"system\":\"");
-            json_escape(b, msgs[i].content ? msgs[i].content : "");
-            buf_append_str(b, "\"");
+            const char *dynamic = msgs[i].content ? msgs[i].content : "";
+            if (system_cache_static && system_cache_static[0] != '\0') {
+                buf_append_str(b, ",\"system\":[{\"type\":\"text\",\"text\":\"");
+                json_escape(b, system_cache_static);
+                buf_append_str(b, "\",\"cache_control\":{\"type\":\"ephemeral\"}}"
+                                  ",{\"type\":\"text\",\"text\":\"");
+                json_escape(b, dynamic);
+                buf_append_str(b, "\"}]");
+            } else {
+                buf_append_str(b, ",\"system\":\"");
+                json_escape(b, dynamic);
+                buf_append_str(b, "\"");
+            }
             break; /* Only the first system message is used. */
         }
     }
@@ -422,7 +441,8 @@ int provider_stream(Provider *p,
     int r;
     if (p->cfg.type == PROVIDER_CLAUDE)
         r = build_claude_body(&p->body_buf, p->cfg.model, msgs, nmsg,
-                              p->cfg.thinking_budget);
+                              p->cfg.thinking_budget,
+                              p->cfg.system_cache_static);
     else if (p->cfg.type == PROVIDER_OLLAMA)
         r = build_ollama_body(&p->body_buf, p->cfg.model, msgs, nmsg);
     else

@@ -61,6 +61,24 @@ void fileops_set_audit(AuditLog *log, const char *session_id,
 int fileops_get_files_created(void);
 
 /*
+ * Optional confirmation callback for write_file and edit_file.
+ * Called before each file is written.  Return values:
+ *   > 0  — apply this change
+ *     0  — reject this change (tool returns an error to the agent)
+ *   < 0  — apply this change and disable the callback for the rest of the session
+ *
+ * path        — the file being written
+ * old_content — current file content (NULL if file is new)
+ * new_content — proposed new content
+ * ctx         — opaque pointer passed to fileops_set_confirm_cb
+ */
+typedef int (*fileops_confirm_cb)(const char *path,
+                                  const char *old_content,
+                                  const char *new_content,
+                                  void *ctx);
+void fileops_set_confirm_cb(fileops_confirm_cb cb, void *ctx);
+
+/*
  * Individual tool handlers — exported so tests can invoke them directly
  * without going through the registry.
  *

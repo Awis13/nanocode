@@ -75,6 +75,19 @@ void fileops_set_confirm_cb(fileops_confirm_cb cb, void *ctx)
 }
 
 /* -------------------------------------------------------------------------
+ * Optional confirmation callback (set by the TUI layer at startup)
+ * ---------------------------------------------------------------------- */
+
+static fileops_confirm_cb s_confirm_cb  = NULL;
+static void              *s_confirm_ctx = NULL;
+
+void fileops_set_confirm_cb(fileops_confirm_cb cb, void *ctx)
+{
+    s_confirm_cb  = cb;
+    s_confirm_ctx = ctx;
+}
+
+/* -------------------------------------------------------------------------
  * Path safety: canonicalize path and restrict to working directory.
  *
  * Resolves . and .. components purely by string manipulation (no filesystem

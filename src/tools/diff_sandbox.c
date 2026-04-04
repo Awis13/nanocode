@@ -411,6 +411,16 @@ void diff_sandbox_show(DiffSandbox *sb)
     fflush(stdout);
 }
 
+void diff_sandbox_show_one(const char *path,
+                           const char *old_content,
+                           const char *new_content,
+                           Arena *arena)
+{
+    if (!path || !new_content || !arena) return;
+    print_unified_diff(path, old_content, new_content, arena);
+    fflush(stdout);
+}
+
 int diff_sandbox_apply(DiffSandbox *sb)
 {
     if (!sb || sb->discarded) return -1;

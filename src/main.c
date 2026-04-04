@@ -12,6 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "pipe.h"
 #include "../include/config.h"
 #include "../include/editor.h"
 #include "../include/json_output.h"
@@ -169,6 +170,49 @@ int main(int argc, char **argv)
         }
         int rc = editor_open_from_ref(argv[2], NULL /* no sandbox check */);
         return rc == 0 ? 0 : 1;
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 0.5: Pipe mode — fast path before config loading.
+     *
+     * Activated by --pipe flag or when stdin is not a TTY.
+     * Reads all of stdin, fires a single API request, streams to stdout.
+     * --model and --raw are pipe-mode-specific flags parsed here.
+     * -------------------------------------------------------------------- */
+    {
+        int         pipe_flag   = 0;
+        int         raw_flag    = 0;
+        const char *pipe_model  = NULL;
+        const char *instruction = NULL;
+
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "--pipe") == 0) {
+                pipe_flag = 1;
+            } else if (strcmp(argv[i], "--raw") == 0) {
+                raw_flag = 1;
+            } else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
+                pipe_model = argv[++i];
+            } else if (argv[i][0] != '-' && !instruction) {
+                instruction = argv[i];
+            }
+        }
+
+        if (!pipe_flag && !isatty(STDIN_FILENO))
+            pipe_flag = 1;
+
+        if (pipe_flag) {
+            if (!instruction) {
+                fprintf(stderr,
+                    "nanocode: pipe mode requires an instruction argument\n"
+                    "  Example: cat file.c | nanocode --pipe \"explain this\"\n");
+                return 1;
+            }
+            PipeArgs args;
+            args.instruction = instruction;
+            args.model       = pipe_model;
+            args.raw         = raw_flag;
+            return pipe_run(&args);
+        }
     }
 
     /* -----------------------------------------------------------------------

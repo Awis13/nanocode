@@ -44,6 +44,9 @@ void renderer_free(Renderer *r);
 /* Override terminal width — useful for deterministic unit tests. */
 void renderer_set_width(Renderer *r, int width);
 
+/* Re-query terminal width via TIOCGWINSZ (e.g. after SIGWINCH). */
+void renderer_update_width(Renderer *r);
+
 /*
  * Write-batching frame API (60 fps / 16 ms cadence).
  *

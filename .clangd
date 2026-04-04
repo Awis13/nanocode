@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - -Iinclude
+    - -Isrc
+    - -Isrc/core
+    - -Ivendor/jsmn
+    - -Ivendor/bearssl/inc

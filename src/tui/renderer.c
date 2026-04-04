@@ -31,6 +31,7 @@
 #define SGR_BOLD    "\033[1m"
 #define SGR_ITALIC  "\033[3m"
 #define SGR_REV     "\033[7m"   /* reverse video — inline code */
+#define SGR_DIM     "\033[2m"   /* dim — separators, labels   */
 #define FG_RED      "\033[31m"
 #define FG_GREEN    "\033[32m"
 #define FG_YELLOW   "\033[33m"
@@ -273,6 +274,27 @@ static const char * const kw_bash[] = {
     "readonly","declare","typeset","unset","source","echo","exit",NULL
 };
 
+static const char * const kw_go[] = {
+    "break","case","chan","const","continue","default","defer","else",
+    "fallthrough","for","func","go","goto","if","import","interface","map",
+    "package","range","return","select","struct","switch","type","var",
+    "nil","true","false","iota","make","new","len","cap","append","copy",
+    "delete","close","panic","recover","print","println","error",
+    "int","int8","int16","int32","int64","uint","uint8","uint16","uint32",
+    "uint64","uintptr","float32","float64","complex64","complex128",
+    "bool","byte","rune","string","any","comparable",NULL
+};
+
+static const char * const kw_rust[] = {
+    "as","async","await","break","const","continue","crate","dyn","else",
+    "enum","extern","false","fn","for","if","impl","in","let","loop",
+    "match","mod","move","mut","pub","ref","return","self","Self","static",
+    "struct","super","trait","true","type","union","unsafe","use","where",
+    "while","i8","i16","i32","i64","i128","isize","u8","u16","u32","u64",
+    "u128","usize","f32","f64","bool","char","str","String","Vec","Option",
+    "Result","Box","None","Some","Ok","Err",NULL
+};
+
 static bool is_kw(const char *s, int n, const char * const *kws)
 {
     for (int i = 0; kws[i]; i++) {
@@ -280,6 +302,29 @@ static bool is_kw(const char *s, int n, const char * const *kws)
         if (klen == n && memcmp(kws[i], s, (size_t)n) == 0) return true;
     }
     return false;
+}
+
+/*
+ * Emit a dim language label right-aligned in the first line of a code fence.
+ * e.g.:  ──────────────────────────────────── python
+ * No-op when lang is empty.
+ */
+static void emit_fence_header(Renderer *r)
+{
+    if (r->langlen == 0) return;
+
+    const char *col = r->is_256color ? FG256_CMT : SGR_DIM;
+    /* Number of ─ glyphs (each 1 column wide): fill up to (term_width - langlen - 1) */
+    int dashes = r->term_width - r->langlen - 1;
+    if (dashes < 0) dashes = 0;
+
+    out_str(r, col);
+    for (int i = 0; i < dashes; i++)
+        out_raw(r, "\xe2\x94\x80", 3); /* U+2500 BOX DRAWINGS LIGHT HORIZONTAL */
+    out_raw(r, " ", 1);
+    out_raw(r, r->lang, r->langlen);
+    out_str(r, SGR_RESET);
+    out_nl(r);
 }
 
 /*
@@ -297,6 +342,8 @@ static void emit_code_line(Renderer *r, const char *line, int len,
     bool is_bash = strcmp(lang,"bash")==0 || strcmp(lang,"sh")==0 ||
                    strcmp(lang,"shell")==0 || strcmp(lang,"zsh")==0;
     bool is_json = strcmp(lang,"json")==0;
+    bool is_go   = strcmp(lang,"go")==0 || strcmp(lang,"golang")==0;
+    bool is_rust = strcmp(lang,"rust")==0 || strcmp(lang,"rs")==0;
 
     const char * const *kws  = NULL;
     const char *kw_col  = r->is_256color ? FG256_KW  : FG_CYAN;
@@ -308,6 +355,8 @@ static void emit_code_line(Renderer *r, const char *line, int len,
     if (is_py)   kws = kw_py;
     if (is_js)   kws = kw_js;
     if (is_bash) kws = kw_bash;
+    if (is_go)   kws = kw_go;
+    if (is_rust) kws = kw_rust;
 
     int i = 0;
     while (i < len) {
@@ -358,15 +407,15 @@ static void emit_code_line(Renderer *r, const char *line, int len,
 
         /* ---- Language with keyword list ------------------------------ */
         if (kws) {
-            /* C/C++ line comment */
-            if ((is_c || is_js) && c=='/' && i+1<len && line[i+1]=='/') {
+            /* C/C++/Go/JS line comment */
+            if ((is_c || is_js || is_go) && c=='/' && i+1<len && line[i+1]=='/') {
                 out_str(r, cmt_col);
                 out_raw(r, line+i, len-i);
                 out_str(r, SGR_RESET);
                 i = len; continue;
             }
-            /* C block comment */
-            if (is_c && c=='/' && i+1<len && line[i+1]=='*') {
+            /* C/Go block comment */
+            if ((is_c || is_go) && c=='/' && i+1<len && line[i+1]=='*') {
                 out_str(r, cmt_col);
                 while (i < len) {
                     if (i+1<len && line[i]=='*' && line[i+1]=='/') {
@@ -493,6 +542,7 @@ static int process_one(Renderer *r)
             r->llen  = 0;
             r->col   = 0;
             r->bol   = true;
+            emit_fence_header(r);  /* right-aligned dim language label */
             return 1;
         }
         if (c != '\r' && r->langlen < LANG_CAP - 1)
@@ -750,6 +800,13 @@ Renderer *renderer_new(int fd, Arena *arena)
 void renderer_set_width(Renderer *r, int width)
 {
     r->term_width = width;
+}
+
+void renderer_update_width(Renderer *r)
+{
+    struct winsize ws;
+    if (ioctl(r->fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+        r->term_width = ws.ws_col;
 }
 
 void renderer_token(Renderer *r, const char *tok, size_t len)

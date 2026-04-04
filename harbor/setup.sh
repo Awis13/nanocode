@@ -29,7 +29,7 @@ git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$BUILD_DIR"
 
 echo "[nanocode setup] Building nanocode (RELEASE=1)..."
 cd "$BUILD_DIR"
-git submodule update --init vendor/bearssl
+git submodule update --init vendor/bearssl vendor/jsmn
 make all RELEASE=1
 
 echo "[nanocode setup] Installing binary to ${INSTALL_PREFIX}/bin/..."

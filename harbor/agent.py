@@ -5,10 +5,12 @@ Usage (from the harbor/ directory):
     PYTHONPATH=. tb run --agent-import-path agent:NanocodeAgent hello-world
 
 Environment variables:
-    ANTHROPIC_API_KEY   required — passed through to nanocode in the container
     NANOCODE_REPO_URL   optional — git repo to clone (default: GitHub main)
     NANOCODE_REF        optional — branch/tag/commit (default: main)
-    ANTHROPIC_MODEL     optional — model override passed via --model flag
+    OLLAMA_HOST         optional — Ollama base URL (default: http://host.docker.internal:11434)
+    OLLAMA_MODEL        optional — model to use (default: gemma4:26b)
+
+Note: nanocode uses Ollama for local inference. No Anthropic API key is required.
 """
 
 import os
@@ -44,9 +46,7 @@ class NanocodeAgent(AbstractInstalledAgent):
 
     @property
     def _env(self) -> dict[str, str]:
-        env: dict[str, str] = {
-            "ANTHROPIC_API_KEY": os.environ["ANTHROPIC_API_KEY"],
-        }
+        env: dict[str, str] = {}
         # Propagate repo source overrides so setup.sh can use them.
         if self._repo_url:
             env["NANOCODE_REPO_URL"] = self._repo_url
@@ -58,12 +58,14 @@ class NanocodeAgent(AbstractInstalledAgent):
         elif "NANOCODE_REF" in os.environ:
             env["NANOCODE_REF"] = os.environ["NANOCODE_REF"]
 
-        # Optional model override.
-        model = self._model_name
-        if model is None:
-            model = os.environ.get("ANTHROPIC_MODEL")
-        if model:
-            env["ANTHROPIC_MODEL"] = model.removeprefix("anthropic/")
+        # Ollama configuration passed to setup.sh to write config.toml.
+        env["OLLAMA_HOST"] = os.environ.get(
+            "OLLAMA_HOST", "http://host.docker.internal:11434"
+        )
+        env["OLLAMA_MODEL"] = (
+            self._model_name
+            or os.environ.get("OLLAMA_MODEL", "gemma4:26b")
+        )
 
         return env
 

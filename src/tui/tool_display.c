@@ -99,6 +99,24 @@ void tool_display_invocation(int fd, const char *tool,
                  "%s", a);
     }
 
+    /* Top border: dim ╭──────... to visually open the tool block. */
+    {
+        char border[TOOL_DISPLAY_WIDTH * 3 + 32]; /* ─ is 3 bytes each */
+        int bpos = 0;
+        /* DIM + ╭ (U+256D: \xe2\x95\xad) */
+        memcpy(border + bpos, ANSI_DIM, sizeof(ANSI_DIM) - 1);
+        bpos += sizeof(ANSI_DIM) - 1;
+        memcpy(border + bpos, "\xe2\x95\xad", 3); bpos += 3; /* ╭ */
+        /* Fill: (TOOL_DISPLAY_WIDTH - 1) × ─ (U+2500: \xe2\x94\x80) */
+        for (int i = 1; i < TOOL_DISPLAY_WIDTH; i++) {
+            memcpy(border + bpos, "\xe2\x94\x80", 3); bpos += 3;
+        }
+        memcpy(border + bpos, ANSI_RESET, sizeof(ANSI_RESET) - 1);
+        bpos += sizeof(ANSI_RESET) - 1;
+        border[bpos++] = '\n';
+        fd_write(fd, border, (size_t)bpos);
+    }
+
     n = snprintf(line, sizeof(line),
                  ANSI_DIM "> %s: %s" ANSI_RESET "\n", tbuf, abuf);
     if (n > 0)

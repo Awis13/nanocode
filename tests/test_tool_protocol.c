@@ -353,6 +353,176 @@ TEST(test_build_schema_openai_wraps_function)
 }
 
 /* =========================================================================
+ * CMP-302: Concurrent tool dispatch tests
+ * ====================================================================== */
+
+#include <time.h>
+
+/* A slow read-only tool: sleeps 50ms then returns its name. */
+static ToolResult slow_read_handler(Arena *arena, const char *args_json)
+{
+    (void)args_json;
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50 * 1000 * 1000 };
+    nanosleep(&ts, NULL);
+
+    static const char msg[] = "\"done\"";
+    char *buf = arena_alloc(arena, sizeof(msg));
+    if (buf) memcpy(buf, msg, sizeof(msg));
+    ToolResult r = { .error = 0, .content = buf, .len = sizeof(msg) - 1 };
+    return r;
+}
+
+/* Verify two READONLY tools run faster in parallel than their combined
+ * sequential time (each sleeps 50ms; parallel should finish in ~50ms, not 100). */
+TEST(test_dispatch_readonly_tools_run_in_parallel)
+{
+    tool_registry_reset();
+    tool_register("slow_read", "{}", slow_read_handler, TOOL_SAFE_READONLY);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+
+    ToolCall calls[2];
+    calls[0].id    = "r1";
+    calls[0].name  = "slow_read";
+    calls[0].input = "{}";
+    calls[1].id    = "r2";
+    calls[1].name  = "slow_read";
+    calls[1].input = "{}";
+
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    int dispatched = tool_dispatch_all(calls, 2, conv, a);
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    long elapsed_ms = (end.tv_sec - start.tv_sec) * 1000
+                    + (end.tv_nsec - start.tv_nsec) / 1000000;
+
+    ASSERT_EQ(dispatched, 2);
+    /* Sequential would take >= 100ms. Parallel should take < 90ms. */
+    ASSERT_TRUE(elapsed_ms < 90);
+
+    arena_free(a);
+    tool_registry_reset();
+}
+
+/* Verify that turn ordering in conv is always [use1, use2, result1, result2]
+ * regardless of which thread finishes first. */
+TEST(test_dispatch_readonly_preserves_turn_order)
+{
+    tool_registry_reset();
+    tool_register("r_tool", "{}", slow_read_handler, TOOL_SAFE_READONLY);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+
+    ToolCall calls[3];
+    calls[0].id    = "id0"; calls[0].name = "r_tool"; calls[0].input = "{}";
+    calls[1].id    = "id1"; calls[1].name = "r_tool"; calls[1].input = "{}";
+    calls[2].id    = "id2"; calls[2].name = "r_tool"; calls[2].input = "{}";
+
+    int dispatched = tool_dispatch_all(calls, 3, conv, a);
+    ASSERT_EQ(dispatched, 3);
+
+    /* 6 turns: tool_use×3 then tool_result×3. */
+    ASSERT_EQ(conv->nturn, 6);
+
+    /* All tool_use turns come first in original order. */
+    for (int k = 0; k < 3; k++) {
+        ASSERT_STR_EQ(conv->turns[k].role, "assistant");
+        ASSERT_EQ(conv->turns[k].is_tool, 1);
+        ASSERT_TRUE(strstr(conv->turns[k].content, calls[k].id) != NULL);
+    }
+
+    /* All tool_result turns follow in original order. */
+    for (int k = 0; k < 3; k++) {
+        ASSERT_STR_EQ(conv->turns[3 + k].role, "user");
+        ASSERT_EQ(conv->turns[3 + k].is_tool, 1);
+        ASSERT_TRUE(strstr(conv->turns[3 + k].content, calls[k].id) != NULL);
+    }
+
+    arena_free(a);
+    tool_registry_reset();
+}
+
+/* Verify that a MUTATING tool in the middle of READONLY tools breaks batching:
+ * readonly batch | mutating | readonly batch. */
+TEST(test_dispatch_mutating_tool_is_exclusive)
+{
+    tool_registry_reset();
+    tool_register("r_tool", "{}", slow_read_handler, TOOL_SAFE_READONLY);
+    tool_register("m_tool", "{}", dummy_tool_handler, TOOL_SAFE_MUTATING);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+
+    ToolCall calls[3];
+    calls[0].id    = "r0"; calls[0].name = "r_tool"; calls[0].input = "{}";
+    calls[1].id    = "m0"; calls[1].name = "m_tool"; calls[1].input = "{}";
+    calls[2].id    = "r1"; calls[2].name = "r_tool"; calls[2].input = "{}";
+
+    int dispatched = tool_dispatch_all(calls, 3, conv, a);
+    ASSERT_EQ(dispatched, 3);
+
+    /* 6 turns total. */
+    ASSERT_EQ(conv->nturn, 6);
+
+    /* r0 use, r0 result, m0 use, m0 result, r1 use, r1 result. */
+    ASSERT_TRUE(strstr(conv->turns[0].content, "r0") != NULL);
+    ASSERT_TRUE(strstr(conv->turns[1].content, "r0") != NULL);
+    ASSERT_TRUE(strstr(conv->turns[2].content, "m0") != NULL);
+    ASSERT_TRUE(strstr(conv->turns[3].content, "m0") != NULL);
+    ASSERT_TRUE(strstr(conv->turns[4].content, "r1") != NULL);
+    ASSERT_TRUE(strstr(conv->turns[5].content, "r1") != NULL);
+
+    arena_free(a);
+    tool_registry_reset();
+}
+
+/* All-MUTATING sequence: must still dispatch correctly (sequential path). */
+TEST(test_dispatch_all_mutating_sequential)
+{
+    tool_registry_reset();
+    tool_register("bash", "{}", dummy_tool_handler, TOOL_SAFE_MUTATING);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+
+    ToolCall calls[3];
+    calls[0].id    = "b0"; calls[0].name = "bash"; calls[0].input = "{\"cmd\":\"ls\"}";
+    calls[1].id    = "b1"; calls[1].name = "bash"; calls[1].input = "{\"cmd\":\"pwd\"}";
+    calls[2].id    = "b2"; calls[2].name = "bash"; calls[2].input = "{\"cmd\":\"id\"}";
+
+    int dispatched = tool_dispatch_all(calls, 3, conv, a);
+    ASSERT_EQ(dispatched, 3);
+
+    /* 6 turns in interleaved order: use/result/use/result/use/result */
+    ASSERT_EQ(conv->nturn, 6);
+    ASSERT_STR_EQ(conv->turns[0].role, "assistant");
+    ASSERT_STR_EQ(conv->turns[1].role, "user");
+    ASSERT_STR_EQ(conv->turns[2].role, "assistant");
+    ASSERT_STR_EQ(conv->turns[3].role, "user");
+    ASSERT_STR_EQ(conv->turns[4].role, "assistant");
+    ASSERT_STR_EQ(conv->turns[5].role, "user");
+
+    arena_free(a);
+    tool_registry_reset();
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -377,6 +547,12 @@ int main(void)
     /* Schema payload */
     RUN_TEST(test_build_schema_claude_returns_array);
     RUN_TEST(test_build_schema_openai_wraps_function);
+
+    /* CMP-302: concurrent dispatch */
+    RUN_TEST(test_dispatch_readonly_tools_run_in_parallel);
+    RUN_TEST(test_dispatch_readonly_preserves_turn_order);
+    RUN_TEST(test_dispatch_mutating_tool_is_exclusive);
+    RUN_TEST(test_dispatch_all_mutating_sequential);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

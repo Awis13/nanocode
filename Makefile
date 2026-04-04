@@ -1,6 +1,6 @@
 CC      ?= cc
 CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -O2
-LDFLAGS :=
+LDFLAGS := -lpthread
 DESTDIR ?= /usr/local
 
 # Debug build: make DEBUG=1
@@ -40,7 +40,7 @@ INCLUDES := -Iinclude            \
 # ---------------------------------------------------------------------------
 
 TEST_CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -g -O0 -DDEBUG
-TEST_LDFLAGS :=
+TEST_LDFLAGS := -lpthread
 
 TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor \
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
@@ -170,7 +170,7 @@ tests/test_tool_protocol: tests/test_tool_protocol.c \
                            src/util/buf.c \
                            src/util/json.c \
                            src/core/status_file.c
-	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) $(TEST_LDFLAGS) -o $@ $^
 
 # CMP-200: OS-level sandbox enforcement — macOS SBPL + Linux Landlock
 tests/test_sandbox: tests/test_sandbox.c src/core/sandbox.c \

@@ -32,6 +32,7 @@
 #include "../util/arena.h"
 #include "../util/buf.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -441,7 +442,35 @@ char *tool_build_schema_payload(ProviderType type, Arena *arena)
 
 /* -------------------------------------------------------------------------
  * tool_dispatch_all
+ *
+ * Concurrent dispatch: consecutive TOOL_SAFE_READONLY calls run in parallel
+ * threads (each on its own arena). TOOL_SAFE_MUTATING calls run exclusively
+ * and sequentially, guaranteeing no overlap with any other call.
+ *
+ * Ordering contract: tool_use and tool_result turns are always added to conv
+ * in the original call-index order, regardless of execution order.
+ *
+ * Thread safety: tool_invoke_noside() is used inside threads to avoid calling
+ * the global event callback and status-file writer concurrently from multiple
+ * threads. The caller's arena is never touched from worker threads.
  * ---------------------------------------------------------------------- */
+
+/* Per-thread work item for a batch of parallel read-only calls. */
+typedef struct {
+    const ToolCall *call;
+    Arena          *thread_arena;  /* private arena; freed after result copy */
+    ToolResult      result;
+    int             launched;      /* 1 if pthread_create succeeded */
+    pthread_t       tid;
+} BatchEntry;
+
+static void *dispatch_thread(void *arg)
+{
+    BatchEntry *e = arg;
+    /* tool_invoke_noside avoids global callbacks — safe to call concurrently. */
+    e->result = tool_invoke_noside(e->thread_arena, e->call->name, e->call->input);
+    return NULL;
+}
 
 int tool_dispatch_all(const ToolCall *calls, int ncalls,
                       Conversation *conv, Arena *arena)
@@ -450,22 +479,113 @@ int tool_dispatch_all(const ToolCall *calls, int ncalls,
         return 0;
 
     int dispatched = 0;
-    for (int i = 0; i < ncalls; i++) {
+    int i          = 0;
+
+    while (i < ncalls) {
         const ToolCall *tc = &calls[i];
-        if (!tc->id || !tc->name || !tc->input)
+        if (!tc->id || !tc->name || !tc->input) {
+            i++;
             continue;
+        }
 
-        /* 1. Record the tool_use turn (assistant). */
-        conv_add_tool_use(conv, tc->id, tc->name, tc->input);
+        if (tool_get_safety(tc->name) == TOOL_SAFE_READONLY) {
+            /* ----------------------------------------------------------
+             * Collect a run of consecutive READONLY calls.
+             * ---------------------------------------------------------- */
+            int batch_start = i;
+            int batch_end   = i;
+            while (batch_end < ncalls) {
+                const ToolCall *btc = &calls[batch_end];
+                if (!btc->id || !btc->name || !btc->input)
+                    break;
+                if (tool_get_safety(btc->name) != TOOL_SAFE_READONLY)
+                    break;
+                batch_end++;
+            }
+            int batch_size = batch_end - batch_start;
 
-        /* 2. Dispatch through the executor. */
-        ToolResult result = tool_invoke(arena, tc->name, tc->input);
+            /* 1. Record all tool_use turns in original order (before any
+             *    execution so the conversation ordering is stable). */
+            for (int k = batch_start; k < batch_end; k++) {
+                const ToolCall *btc = &calls[k];
+                conv_add_tool_use(conv, btc->id, btc->name, btc->input);
+            }
 
-        /* 3. Record the tool_result turn (user). */
-        const char *content = result.content ? result.content : "";
-        conv_add_tool_result(conv, tc->id, content);
+            /* 2. Launch a thread per batch member. */
+            BatchEntry entries[TP_MAX_CALLS];
+            for (int k = 0; k < batch_size; k++) {
+                BatchEntry *e = &entries[k];
+                e->call         = &calls[batch_start + k];
+                e->launched     = 0;
+                e->result       = (ToolResult){0, NULL, 0};
+                e->thread_arena = arena_new(512 * 1024); /* 512 KB per thread */
 
-        dispatched++;
+                if (!e->thread_arena) {
+                    /* OOM fallback: run synchronously on caller arena. */
+                    e->result = tool_invoke(arena, e->call->name, e->call->input);
+                    continue;
+                }
+
+                if (pthread_create(&e->tid, NULL, dispatch_thread, e) != 0) {
+                    /* Thread creation failed: run synchronously. */
+                    e->result = tool_invoke(arena, e->call->name, e->call->input);
+                    arena_free(e->thread_arena);
+                    e->thread_arena = NULL;
+                    continue;
+                }
+                e->launched = 1;
+            }
+
+            /* 3. Join all threads. */
+            for (int k = 0; k < batch_size; k++) {
+                if (entries[k].launched)
+                    pthread_join(entries[k].tid, NULL);
+            }
+
+            /* 4. Copy results to caller arena and record tool_result turns
+             *    in original order, then free per-thread arenas. */
+            for (int k = 0; k < batch_size; k++) {
+                BatchEntry *e = &entries[k];
+                const char *content = "";
+
+                if (e->result.content) {
+                    if (e->result.len > 0) {
+                        char *copy = arena_alloc(arena, e->result.len + 1);
+                        if (copy) {
+                            memcpy(copy, e->result.content, e->result.len);
+                            copy[e->result.len] = '\0';
+                            content = copy;
+                        }
+                    } else {
+                        /* Zero-length but non-NULL: safe to use directly if
+                         * it came from the caller arena (synchronous fallback),
+                         * but it's always a NUL-terminated string then. */
+                        content = e->result.content;
+                    }
+                }
+
+                conv_add_tool_result(conv, e->call->id, content);
+                dispatched++;
+
+                if (e->thread_arena) {
+                    arena_free(e->thread_arena);
+                    e->thread_arena = NULL;
+                }
+            }
+
+            i = batch_end;
+
+        } else {
+            /* ----------------------------------------------------------
+             * MUTATING tool — exclusive sequential execution.
+             * ---------------------------------------------------------- */
+            conv_add_tool_use(conv, tc->id, tc->name, tc->input);
+            ToolResult result = tool_invoke(arena, tc->name, tc->input);
+            const char *content = result.content ? result.content : "";
+            conv_add_tool_result(conv, tc->id, content);
+            dispatched++;
+            i++;
+        }
     }
 
     return dispatched;

@@ -803,6 +803,6 @@ static ToolResult git_branch_create_handler(Arena *arena, const char *args_json)
 
 void git_tools_register(void)
 {
-    tool_register("git_commit",        s_commit_schema, git_commit_handler);
-    tool_register("git_branch_create", s_branch_schema, git_branch_create_handler);
+    tool_register("git_commit", s_commit_schema, git_commit_handler, TOOL_SAFE_MUTATING);
+    tool_register("git_branch_create", s_branch_schema, git_branch_create_handler, TOOL_SAFE_MUTATING);
 }

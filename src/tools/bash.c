@@ -644,5 +644,5 @@ static const char s_schema[] =
 
 void bash_tool_register(void)
 {
-    tool_register("bash", s_schema, bash_handler);
+    tool_register("bash", s_schema, bash_handler, TOOL_SAFE_MUTATING);
 }

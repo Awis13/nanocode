@@ -33,9 +33,9 @@ TEST(test_dryrun_returns_synthetic_result) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash",       "{}", handler_noop);
-    tool_register("write_file", "{}", handler_noop);
-    tool_register("read_file",  "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
+    tool_register("write_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
+    tool_register("read_file", "{}", handler_noop, TOOL_SAFE_READONLY);
     executor_set_mode(EXEC_MODE_DRY_RUN);
 
     ToolResult r = tool_invoke(a, "bash", "{}");
@@ -53,7 +53,7 @@ TEST(test_dryrun_does_not_call_handler) {
     ASSERT_NOT_NULL(a);
 
     /* handler_noop returns "ok"; dry-run should return {"dry_run":true} */
-    tool_register("write_file", "{}", handler_noop);
+    tool_register("write_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_DRY_RUN);
 
     ToolResult r = tool_invoke(a, "write_file", "{}");
@@ -72,9 +72,9 @@ TEST(test_dryrun_applies_to_all_tools) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("read_file",  "{}", handler_noop);
-    tool_register("grep",       "{}", handler_noop);
-    tool_register("glob",       "{}", handler_noop);
+    tool_register("read_file", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("grep", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("glob", "{}", handler_noop, TOOL_SAFE_READONLY);
     executor_set_mode(EXEC_MODE_DRY_RUN);
 
     ToolResult r1 = tool_invoke(a, "read_file", "{}");
@@ -98,7 +98,7 @@ TEST(test_dryrun_restores_to_normal) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_DRY_RUN);
 
     ToolResult r1 = tool_invoke(a, "bash", "{}");
@@ -122,7 +122,7 @@ TEST(test_readonly_blocks_bash) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_READONLY);
 
     ToolResult r = tool_invoke(a, "bash", "{}");
@@ -139,7 +139,7 @@ TEST(test_readonly_blocks_write_file) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("write_file", "{}", handler_noop);
+    tool_register("write_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_READONLY);
 
     ToolResult r = tool_invoke(a, "write_file", "{}");
@@ -156,7 +156,7 @@ TEST(test_readonly_blocks_edit_file) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("edit_file", "{}", handler_noop);
+    tool_register("edit_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_READONLY);
 
     ToolResult r = tool_invoke(a, "edit_file", "{}");
@@ -173,7 +173,7 @@ TEST(test_readonly_allows_read_file) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("read_file", "{}", handler_noop);
+    tool_register("read_file", "{}", handler_noop, TOOL_SAFE_READONLY);
     executor_set_mode(EXEC_MODE_READONLY);
 
     ToolResult r = tool_invoke(a, "read_file", "{}");
@@ -189,9 +189,9 @@ TEST(test_readonly_allows_grep_and_glob) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("grep",     "{}", handler_noop);
-    tool_register("glob",     "{}", handler_noop);
-    tool_register("webfetch", "{}", handler_noop);
+    tool_register("grep", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("glob", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("webfetch", "{}", handler_noop, TOOL_SAFE_READONLY);
     executor_set_mode(EXEC_MODE_READONLY);
 
     ToolResult r1 = tool_invoke(a, "grep", "{}");
@@ -212,7 +212,7 @@ TEST(test_readonly_restores_to_normal) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_READONLY);
 
     ToolResult r1 = tool_invoke(a, "bash", "{}");

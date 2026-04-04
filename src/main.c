@@ -15,13 +15,14 @@
 #include "../include/config.h"
 #include "../include/editor.h"
 #include "../include/json_output.h"
-#include "../include/pet.h"
+#include "../include/oneshot.h"
 #include "../include/sandbox.h"
 #include "../include/status_file.h"
 #include "../include/daemon.h"
+#include "../src/agent/conversation.h"
+#include "../src/agent/prompt.h"
 #include "../src/api/provider.h"
 #include "../src/core/loop.h"
-#include "../src/tui/statusbar.h"
 #include "../src/util/arena.h"
 #include "../src/util/duration.h"
 #include "../src/tools/bash.h"
@@ -55,15 +56,98 @@ static const char *daemon_dispatch_stub(const char *prompt, const char *cwd,
     return "ok";
 }
 
-/* Tool event callback — transitions pet state based on tool execution. */
-static void pet_tool_event_cb(ToolEvent ev, void *ctx)
+/* -------------------------------------------------------------------------
+ * One-shot streaming callbacks and execution
+ * ---------------------------------------------------------------------- */
+
+typedef struct {
+    Loop  *loop;
+    int    done;
+    int    error;
+} OneshotStreamCtx;
+
+static void oneshot_on_token(const char *token, size_t len, void *ctx)
 {
-    Pet *pet = ctx;
-    switch (ev) {
-        case TOOL_EVENT_START: pet_transition(pet, PET_ACTIVE); break;
-        case TOOL_EVENT_DONE:  pet_transition(pet, PET_DONE);   break;
-        case TOOL_EVENT_ERROR: pet_transition(pet, PET_ERROR);  break;
+    (void)ctx;
+    fwrite(token, 1, len, stdout);
+    fflush(stdout);
+}
+
+static void oneshot_on_done(int error, void *ctx)
+{
+    OneshotStreamCtx *oc = ctx;
+    oc->error = error;
+    oc->done  = 1;
+    loop_stop(oc->loop);
+}
+
+/*
+ * run_oneshot — execute the -c instruction via the streaming API,
+ * write plain-text output to stdout, and return 0 on success or 1 on error.
+ */
+static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
+                       const SandboxConfig *sc, Arena *arena)
+{
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) == NULL)
+        cwd[0] = '\0';
+
+    const char *system_prompt = prompt_build(arena, cwd[0] ? cwd : ".", NULL, sc);
+    if (!system_prompt) {
+        fprintf(stderr, "nanocode: failed to build system prompt\n");
+        return 1;
     }
+
+    Conversation *conv = conv_new(arena);
+    if (!conv) {
+        fprintf(stderr, "nanocode: failed to create conversation\n");
+        return 1;
+    }
+    conv_add(conv, "system", system_prompt);
+    conv_add(conv, "user",   flags->command);
+
+    int nmsg = 0;
+    Message *msgs = conv_to_messages(conv, &nmsg, arena);
+    if (!msgs || nmsg == 0) {
+        fprintf(stderr, "nanocode: failed to build message array\n");
+        return 1;
+    }
+
+    Loop *os_loop = loop_new();
+    if (!os_loop) {
+        fprintf(stderr, "nanocode: failed to create event loop\n");
+        return 1;
+    }
+
+    Provider *prov = provider_new(os_loop, pcfg);
+    if (!prov) {
+        fprintf(stderr, "nanocode: failed to create provider\n");
+        loop_free(os_loop);
+        return 1;
+    }
+
+    OneshotStreamCtx oc = {os_loop, 0, 0};
+
+    if (provider_stream(prov, msgs, nmsg,
+                        oneshot_on_token,
+                        NULL,
+                        oneshot_on_done,
+                        &oc) != 0) {
+        fprintf(stderr, "nanocode: failed to start stream\n");
+        provider_free(prov);
+        loop_free(os_loop);
+        return 1;
+    }
+
+    loop_run(os_loop);
+
+    if (!oc.error)
+        fputc('\n', stdout);
+
+    provider_free(prov);
+    loop_free(os_loop);
+
+    return oneshot_exit_code(oc.error, 0);
 }
 
 int main(int argc, char **argv)
@@ -94,22 +178,42 @@ int main(int argc, char **argv)
      * --sandbox-profile <name>   override sandbox.profile
      * --timeout <duration>       session timeout (e.g. 30m, 1h, 90s)
      * --daemon                   run as Unix socket daemon
+     * -c <instruction>           one-shot non-interactive execution
+     * --command <instruction>    one-shot non-interactive execution (long form)
+     * --auto-apply               apply all file changes without prompting
      * -------------------------------------------------------------------- */
     int         cli_json            = 0;
     int         cli_sandbox         = 0;
     int         cli_daemon          = 0;
     int         cli_dry_run         = 0;
     int         cli_readonly        = 0;
-    int         cli_no_pet          = 0;
     const char *cli_sandbox_profile = NULL;
-    const char *cli_pet_name        = NULL;
     char        cli_timeout_arg[64] = "";
+    OneShotFlags oneshot;
+    memset(&oneshot, 0, sizeof(oneshot));
 
-    /* Single-pass flag parse so all flags are known before env-based autodetect. */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--json") == 0) {
-            cli_json = 1;
-        } else if (strcmp(argv[i], "--daemon") == 0) {
+        if (strcmp(argv[i], "--json") == 0) { cli_json = 1; break; }
+    }
+    if (!cli_json && !isatty(STDOUT_FILENO)) {
+        const char *env = getenv("NANOCODE_JSON");
+        if (env && strcmp(env, "1") == 0) cli_json = 1;
+    }
+
+    /* Short-circuit: JSON mode emits the envelope and exits without TUI. */
+    if (cli_json) {
+        JsonOutput jout;
+        json_output_init(&jout);
+        jout.status      = "done";
+        jout.result      = "nanocode json mode active (stub)";
+        jout.duration_ms = 0;
+        json_output_print(&jout);
+        json_output_free(&jout);
+        return NC_EXIT_OK;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--daemon") == 0) {
             cli_daemon = 1;
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             cli_dry_run = 1;
@@ -134,24 +238,15 @@ int main(int argc, char **argv)
             }
             strncpy(cli_timeout_arg, argv[++i], sizeof(cli_timeout_arg) - 1);
             cli_timeout_arg[sizeof(cli_timeout_arg) - 1] = '\0';
-        } else if (strcmp(argv[i], "--no-pet") == 0) {
-            cli_no_pet = 1;
-        } else if (strcmp(argv[i], "--pet") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr,
-                        "nanocode: --pet requires a name "
-                        "(cat | crab | dog | off)\n");
+        } else {
+            char err[256];
+            int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
+                                       err, sizeof(err));
+            if (rc == -1) {
+                fprintf(stderr, "%s\n", err);
                 return 1;
             }
-            cli_pet_name = argv[++i];
         }
-    }
-
-    /* Non-TTY JSON autodetect: skip when --daemon is set to avoid early exit
-     * before the daemon has a chance to start. */
-    if (!cli_json && !cli_daemon && !isatty(STDOUT_FILENO)) {
-        const char *env = getenv("NANOCODE_JSON");
-        if (env && strcmp(env, "1") == 0) cli_json = 1;
     }
 
     /* -----------------------------------------------------------------------
@@ -171,48 +266,6 @@ int main(int argc, char **argv)
     if (cli_sandbox_profile)
         config_set(cfg, "sandbox.profile", cli_sandbox_profile);
 
-    /* Resolve pet selection.
-     * Priority (high → low): --no-pet / --pet flag, implicit disable, config. */
-    {
-        /* Apply CLI pet flags (highest priority). */
-        if (cli_no_pet)
-            config_set(cfg, "pet", "off");
-        else if (cli_pet_name)
-            config_set(cfg, "pet", cli_pet_name);
-
-        /* Implicit disable: --dry-run and --json modes turn off pet output. */
-        if (cli_dry_run || cli_json)
-            config_set(cfg, "pet", "off");
-
-        const char *pet_val = config_get_str(cfg, "pet");
-
-        /* First run: empty pet → default to cat (TODO: replace with
-         * pet_kind_random() once subtask A lands). */
-        if (!pet_val || pet_val[0] == '\0') {
-            config_set(cfg, "pet", "cat");
-            /* Persist the chosen pet so subsequent runs are consistent. */
-            const char *home = getenv("HOME");
-            if (home && home[0]) {
-                char save_path[512];
-                snprintf(save_path, sizeof(save_path),
-                         "%s/.nanocode/config.toml", home);
-                config_save(cfg, save_path);
-            }
-            pet_val = config_get_str(cfg, "pet");
-        }
-
-        /* Validate pet name; warn and fall back to "cat" for unknown values. */
-        if (pet_val && strcmp(pet_val, "cat")  != 0
-                    && strcmp(pet_val, "crab") != 0
-                    && strcmp(pet_val, "dog")  != 0
-                    && strcmp(pet_val, "off")  != 0) {
-            fprintf(stderr,
-                    "nanocode: warning: unknown pet '%s', using 'cat'\n",
-                    pet_val);
-            config_set(cfg, "pet", "cat");
-        }
-    }
-
     /* Resolve execution mode: config key first, then CLI flags (higher priority). */
     {
         ExecMode exec_mode = EXEC_MODE_NORMAL;
@@ -228,17 +281,9 @@ int main(int argc, char **argv)
         executor_set_mode(exec_mode);
     }
 
+
     /* -----------------------------------------------------------------------
      * Phase 2.5: Assemble ProviderConfig from config.
-     *
-     * Reads provider.type, provider.base_url, provider.port, provider.model,
-     * provider.api_key from config and maps them to a ProviderConfig struct.
-     *
-     * Port defaulting:
-     *   - claude:       443 (TLS)
-     *   - openai/ollama: 11434 (Ollama default; LM Studio uses 1234)
-     *
-     * TLS defaulting: off for localhost regardless of type.
      * -------------------------------------------------------------------- */
     ProviderConfig provider_cfg;
     {
@@ -254,31 +299,26 @@ int main(int argc, char **argv)
         else if (type_str && strcmp(type_str, "ollama") == 0)
             ptype = PROVIDER_OLLAMA;
 
-        /* Determine default port for type if not overridden. */
         int port = port_cfg;
-        if (port <= 0) {
+        if (port <= 0)
             port = (ptype == PROVIDER_CLAUDE) ? 443 : 11434;
-        }
 
-        /* Disable TLS for localhost regardless of type. */
         int use_tls = 1;
         if (base_url && (strcmp(base_url, "localhost") == 0 ||
                          strncmp(base_url, "127.", 4) == 0 ||
-                         strcmp(base_url, "::1") == 0)) {
+                         strcmp(base_url, "::1") == 0))
             use_tls = 0;
-        }
-        /* Cloud Claude endpoints always use TLS. */
         if (ptype == PROVIDER_CLAUDE && use_tls == 0 && port == 443)
             use_tls = 1;
 
-        provider_cfg.type     = ptype;
-        provider_cfg.base_url = base_url ? base_url : "api.anthropic.com";
-        provider_cfg.port     = port;
-        provider_cfg.use_tls  = use_tls;
-        provider_cfg.api_key  = api_key;
-        provider_cfg.model    = model ? model : "claude-opus-4-6";
+        provider_cfg.type            = ptype;
+        provider_cfg.base_url        = base_url ? base_url : "api.anthropic.com";
+        provider_cfg.port            = port;
+        provider_cfg.use_tls         = use_tls;
+        provider_cfg.api_key         = api_key;
+        provider_cfg.model           = model ? model : "claude-opus-4-6";
+        provider_cfg.thinking_budget = 0;
     }
-    (void)provider_cfg; /* TODO: pass to agent/loop once wiring is complete */
 
     /* -----------------------------------------------------------------------
      * Phase 3: Validate and activate sandbox.
@@ -309,27 +349,14 @@ int main(int argc, char **argv)
         config_get_str(cfg, "sandbox.denied_commands")
     );
 
+
     /* -----------------------------------------------------------------------
-     * Phase 3.6: Initialize pet and wire TUI/executor observers.
+     * Phase 3.6: One-shot dispatch — skip TUI and run a single instruction.
      * -------------------------------------------------------------------- */
-    Pet         g_pet = {0};
-    StatusBar  *g_statusbar = NULL;
-
-    {
-        const char *pet_val = config_get_str(cfg, "pet");
-        PetKind kind = pet_kind_from_str(pet_val ? pet_val : "off");
-        g_pet = pet_new(kind);
-
-        /* Status bar — only when writing to a TTY in interactive mode. */
-        if (!cli_json && !cli_daemon && isatty(STDERR_FILENO)) {
-            g_statusbar = statusbar_new(STDERR_FILENO, &provider_cfg, 0);
-            if (g_statusbar)
-                statusbar_set_pet(g_statusbar, &g_pet);
-        }
-
-        /* Tool event hook — pet reacts to tool execution. */
-        if (kind != PET_OFF)
-            executor_set_tool_event_cb(pet_tool_event_cb, &g_pet);
+    if (oneshot.enabled) {
+        int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena);
+        arena_free(arena);
+        return rc;
     }
 
     /* -----------------------------------------------------------------------
@@ -372,30 +399,10 @@ int main(int argc, char **argv)
     const char *status_path = config_get_str(cfg, "daemon.status_path");
     const char *sock_path   = config_get_str(cfg, "daemon.sock_path");
 
-    /* Expand relative defaults to ~/.nanocode/ so the daemon files are not
-     * created in whatever the current working directory happens to be. */
-    char default_status_path[512];
-    char default_sock_path[512];
-    if (!status_path || !status_path[0]) {
-        const char *home = getenv("HOME");
-        if (home && home[0])
-            snprintf(default_status_path, sizeof(default_status_path),
-                     "%s/.nanocode/nanocode.status.json", home);
-        else
-            snprintf(default_status_path, sizeof(default_status_path),
-                     "nanocode.status.json");
-        status_path = default_status_path;
-    }
-    if (!sock_path || !sock_path[0]) {
-        const char *home = getenv("HOME");
-        if (home && home[0])
-            snprintf(default_sock_path, sizeof(default_sock_path),
-                     "%s/.nanocode/nanocode.sock", home);
-        else
-            snprintf(default_sock_path, sizeof(default_sock_path),
-                     "nanocode.sock");
-        sock_path = default_sock_path;
-    }
+    if (!status_path || !status_path[0])
+        status_path = "nanocode.status.json";
+    if (!sock_path || !sock_path[0])
+        sock_path = "nanocode.sock";
 
     if (cli_daemon) {
         time_t now = time(NULL);
@@ -425,38 +432,16 @@ int main(int argc, char **argv)
         printf("nanocode daemon listening on %s\n", sock_path);
     }
 
-    if (!cli_json)
-        printf("nanocode v0.1-dev\n");
-
-    struct timespec ts_start, ts_end;
-    clock_gettime(CLOCK_MONOTONIC, &ts_start);
-
+    printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
-
-    clock_gettime(CLOCK_MONOTONIC, &ts_end);
 
     if (cli_daemon) {
         daemon_stop(g_daemon);
         status_file_remove(status_path);
     }
 
-    if (g_statusbar) {
-        statusbar_clear(g_statusbar);
-        statusbar_free(g_statusbar);
-    }
-
-    if (cli_json) {
-        long ms = (long)(ts_end.tv_sec  - ts_start.tv_sec)  * 1000
-                + (long)(ts_end.tv_nsec - ts_start.tv_nsec) / 1000000;
-        JsonOutput jout;
-        json_output_init(&jout);
-        jout.status      = "done";
-        jout.duration_ms = ms;
-        json_output_print(&jout);
-    }
-
     loop_free(g_loop);
     g_loop = NULL;
     arena_free(arena);
-    return NC_EXIT_OK;
+    return 0;
 }

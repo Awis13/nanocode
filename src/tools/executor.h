@@ -36,6 +36,16 @@ typedef enum {
 void     executor_set_mode(ExecMode mode);
 ExecMode executor_get_mode(void);
 
+/*
+ * Safety class for a registered tool.
+ * TOOL_SAFE_READONLY : tool does not mutate state; safe to block in readonly mode.
+ * TOOL_SAFE_MUTATING : tool may mutate files or state; blocked in readonly mode.
+ */
+typedef enum {
+    TOOL_SAFE_READONLY = 0,
+    TOOL_SAFE_MUTATING = 1
+} ToolSafety;
+
 /* Result returned by every tool handler and by tool_invoke(). */
 typedef struct {
     int     error;    /* 0 = success, non-zero = failure */
@@ -51,7 +61,11 @@ typedef ToolResult (*ToolHandler)(Arena *arena, const char *args_json);
  * `name` and `schema_json` are NOT copied — caller must keep them alive.
  * Aborts if TOOL_REGISTRY_MAX is exceeded.
  */
-void tool_register(const char *name, const char *schema_json, ToolHandler fn);
+void tool_register(const char *name, const char *schema_json, ToolHandler fn,
+                   ToolSafety safety);
+ToolSafety tool_get_safety(const char *name);
+ToolResult tool_invoke_noside(Arena *arena, const char *name,
+                              const char *args_json);
 
 /*
  * Dispatch a tool by name.

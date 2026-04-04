@@ -315,9 +315,9 @@ TEST(test_prompt_graceful_not_in_git)
 TEST(test_prompt_lists_tools)
 {
     tool_registry_reset();
-    tool_register("bash",    "{}", dummy_handler);
-    tool_register("read",    "{}", dummy_handler);
-    tool_register("write",   "{}", dummy_handler);
+    tool_register("bash", "{}", dummy_handler, TOOL_SAFE_MUTATING);
+    tool_register("read", "{}", dummy_handler, TOOL_SAFE_READONLY);
+    tool_register("write", "{}", dummy_handler, TOOL_SAFE_READONLY);
 
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);

@@ -24,6 +24,7 @@ typedef struct {
     const char  *name;
     const char  *schema_json;
     ToolHandler  fn;
+    ToolSafety   safety;
 } ToolEntry;
 
 static ToolEntry s_registry[TOOL_REGISTRY_MAX];
@@ -56,7 +57,8 @@ void executor_set_tool_event_cb(tool_event_cb cb, void *ctx)
     s_event_ctx = ctx;
 }
 
-void tool_register(const char *name, const char *schema_json, ToolHandler fn)
+void tool_register(const char *name, const char *schema_json, ToolHandler fn,
+                   ToolSafety safety)
 {
     assert(name != NULL);
     assert(fn   != NULL);
@@ -69,6 +71,7 @@ void tool_register(const char *name, const char *schema_json, ToolHandler fn)
     s_registry[s_count].name        = name;
     s_registry[s_count].schema_json = schema_json;
     s_registry[s_count].fn          = fn;
+    s_registry[s_count].safety      = safety;
     s_count++;
 }
 
@@ -97,12 +100,22 @@ int tool_list_names(const char **names, int max_names)
         names[i] = s_registry[i].name;
     return s_count;
 }
+ToolSafety tool_get_safety(const char *name)
+{
+    assert(name != NULL);
+    for (int i = 0; i < s_count; i++) {
+        if (strcmp(s_registry[i].name, name) == 0)
+            return s_registry[i].safety;
+    }
+    return TOOL_SAFE_MUTATING;
+}
 
 /* -------------------------------------------------------------------------
  * Dispatch
  * ---------------------------------------------------------------------- */
 
-ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
+static ToolResult invoke_raw(Arena *arena, const char *name,
+                             const char *args_json)
 {
     assert(arena != NULL);
     assert(name  != NULL);
@@ -157,18 +170,8 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
     }
 
     for (int i = 0; i < s_count; i++) {
-        if (strcmp(s_registry[i].name, name) == 0) {
-            if (s_event_cb) s_event_cb(TOOL_EVENT_START, s_event_ctx);
-            ToolResult r = s_registry[i].fn(arena, args_json ? args_json : "{}");
-            if (s_event_cb)
-                s_event_cb(r.error ? TOOL_EVENT_ERROR : TOOL_EVENT_DONE, s_event_ctx);
-            if (s_status_path && s_status_info) {
-                s_status_info->last_action = name;
-                s_status_info->tool_calls++;
-                status_file_write(s_status_path, s_status_info);
-            }
-            return r;
-        }
+        if (strcmp(s_registry[i].name, name) == 0)
+            return s_registry[i].fn(arena, args_json ? args_json : "{}");
     }
 
     /* Unknown tool — return error result with descriptive message. */
@@ -197,6 +200,44 @@ ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
     r.content = msg;
     r.len     = pos;
     return r;
+}
+
+ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)
+{
+    /*
+     * Fire events and update status only when a handler will actually execute.
+     * Unknown tools and blocked tools do not trigger the event callback.
+     */
+    int will_run = 0;
+    if (s_exec_mode != EXEC_MODE_DRY_RUN) {
+        int blocked = 0;
+        if (s_exec_mode == EXEC_MODE_READONLY || s_exec_mode == EXEC_MODE_PLAN) {
+            static const char *const s_blk[] = {"bash","write_file","edit_file",NULL};
+            for (int j = 0; s_blk[j]; j++)
+                if (strcmp(name, s_blk[j]) == 0) { blocked = 1; break; }
+        }
+        if (!blocked) {
+            for (int i = 0; i < s_count; i++)
+                if (strcmp(s_registry[i].name, name) == 0) { will_run = 1; break; }
+        }
+    }
+
+    if (will_run && s_event_cb) s_event_cb(TOOL_EVENT_START, s_event_ctx);
+    ToolResult r = invoke_raw(arena, name, args_json);
+    if (will_run && s_event_cb)
+        s_event_cb(r.error ? TOOL_EVENT_ERROR : TOOL_EVENT_DONE, s_event_ctx);
+    if (will_run && s_status_path && s_status_info) {
+        s_status_info->last_action = name;
+        s_status_info->tool_calls++;
+        status_file_write(s_status_path, s_status_info);
+    }
+    return r;
+}
+
+ToolResult tool_invoke_noside(Arena *arena, const char *name,
+                              const char *args_json)
+{
+    return invoke_raw(arena, name, args_json);
 }
 
 /* -------------------------------------------------------------------------
@@ -413,7 +454,8 @@ static const char s_tool_search_schema[] =
 
 void tool_search_register(void)
 {
-    tool_register("tool_search", s_tool_search_schema, tool_search_handler);
+    tool_register("tool_search", s_tool_search_schema, tool_search_handler,
+                  TOOL_SAFE_READONLY);
 }
 
 /* -------------------------------------------------------------------------

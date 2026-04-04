@@ -242,7 +242,7 @@ TEST(test_parse_ollama_same_as_openai)
 TEST(test_dispatch_all_adds_turns)
 {
     tool_registry_reset();
-    tool_register("bash", "{}", dummy_tool_handler);
+    tool_register("bash", "{}", dummy_tool_handler, TOOL_SAFE_MUTATING);
 
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
@@ -317,7 +317,7 @@ TEST(test_build_schema_claude_returns_array)
     tool_registry_reset();
     tool_register("bash", "{\"name\":\"bash\",\"description\":\"run shell\","
                           "\"input_schema\":{\"type\":\"object\"}}",
-                  dummy_tool_handler);
+                  dummy_tool_handler, TOOL_SAFE_MUTATING);
 
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
@@ -336,7 +336,7 @@ TEST(test_build_schema_openai_wraps_function)
     tool_registry_reset();
     tool_register("bash", "{\"name\":\"bash\",\"description\":\"run shell\","
                           "\"input_schema\":{\"type\":\"object\"}}",
-                  dummy_tool_handler);
+                  dummy_tool_handler, TOOL_SAFE_MUTATING);
 
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);

@@ -56,6 +56,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_json_output \
              tests/test_status_file tests/test_daemon \
              tests/test_dryrun \
+             tests/test_oneshot \
              tests/test_pet
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
@@ -204,6 +205,10 @@ tests/test_dryrun: tests/test_dryrun.c src/tools/executor.c src/util/arena.c \
 
 # CMP-243: pet module — sprite data model + state machine
 tests/test_pet: tests/test_pet.c src/tui/pet.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-189: one-shot mode — -c/--command flag parsing, auto-apply, exit codes
+tests/test_oneshot: tests/test_oneshot.c src/core/oneshot.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

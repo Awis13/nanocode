@@ -886,7 +886,8 @@ static void parse_and_register(const char *json, size_t json_len)
 
                 tool_register(slot->tool_name,
                               slot->schema_json,
-                              s_slot_fns[s_slot_count]);
+                              s_slot_fns[s_slot_count],
+                              TOOL_SAFE_MUTATING);
                 s_slot_count++;
             }
         }

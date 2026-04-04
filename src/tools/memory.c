@@ -426,7 +426,7 @@ static const char s_memory_write_schema[] =
 
 void memory_tool_register(void)
 {
-    tool_register("memory_write", s_memory_write_schema, memory_write_handler);
+    tool_register("memory_write", s_memory_write_schema, memory_write_handler, TOOL_SAFE_MUTATING);
 }
 
 char *memory_load(Arena *arena)

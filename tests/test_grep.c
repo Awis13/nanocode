@@ -18,9 +18,10 @@
  * Minimal executor stub
  * ---------------------------------------------------------------------- */
 
-void tool_register(const char *name, const char *schema_json, ToolHandler fn)
+void tool_register(const char *name, const char *schema_json, ToolHandler fn,
+                   ToolSafety safety)
 {
-    (void)name; (void)schema_json; (void)fn;
+    (void)name; (void)schema_json; (void)fn; (void)safety;
 }
 
 ToolResult tool_invoke(Arena *arena, const char *name, const char *args_json)

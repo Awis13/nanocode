@@ -667,5 +667,5 @@ ToolResult grep_search(Arena *arena, const char *args_json)
 
 void grep_register(void)
 {
-    tool_register("grep", GREP_SCHEMA, grep_search);
+    tool_register("grep", GREP_SCHEMA, grep_search, TOOL_SAFE_READONLY);
 }

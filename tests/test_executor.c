@@ -61,7 +61,7 @@ TEST(test_register_and_invoke_noop) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("noop", "{}", handler_noop);
+    tool_register("noop", "{}", handler_noop, TOOL_SAFE_READONLY);
 
     ToolResult r = tool_invoke(a, "noop", "{}");
     ASSERT_EQ(r.error, 0);
@@ -90,8 +90,8 @@ TEST(test_invoke_routes_to_correct_handler) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("noop", "{}", handler_noop);
-    tool_register("echo", "{}", handler_echo);
+    tool_register("noop", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("echo", "{}", handler_echo, TOOL_SAFE_READONLY);
 
     ToolResult r = tool_invoke(a, "echo", "{\"x\":\"hello\"}");
     ASSERT_EQ(r.error, 0);
@@ -105,9 +105,9 @@ TEST(test_invoke_multiple_tools_registered) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("t1", "{}", handler_noop);
-    tool_register("t2", "{}", handler_echo);
-    tool_register("t3", "{}", handler_fail);
+    tool_register("t1", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("t2", "{}", handler_echo, TOOL_SAFE_READONLY);
+    tool_register("t3", "{}", handler_fail, TOOL_SAFE_READONLY);
 
     ToolResult r1 = tool_invoke(a, "t1", "{}");
     ASSERT_EQ(r1.error, 0);
@@ -124,7 +124,7 @@ TEST(test_invoke_null_args_uses_empty_object) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("echo", "{}", handler_echo);
+    tool_register("echo", "{}", handler_echo, TOOL_SAFE_READONLY);
 
     /* NULL args_json should be replaced with "{}". */
     ToolResult r = tool_invoke(a, "echo", NULL);
@@ -139,7 +139,7 @@ TEST(test_all_allocs_from_arena) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("noop", "{}", handler_noop);
+    tool_register("noop", "{}", handler_noop, TOOL_SAFE_READONLY);
 
     size_t before = a->used;
     ToolResult r = tool_invoke(a, "noop", "{}");
@@ -281,7 +281,7 @@ TEST(test_tool_names_json_single_tool) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop, TOOL_SAFE_MUTATING);
 
     char *json = tool_names_json(a);
     ASSERT_NOT_NULL(json);
@@ -295,8 +295,8 @@ TEST(test_tool_names_json_multiple_tools) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
-    tool_register("grep", "{\"name\":\"grep\"}", handler_noop);
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop, TOOL_SAFE_MUTATING);
+    tool_register("grep", "{\"name\":\"grep\"}", handler_noop, TOOL_SAFE_READONLY);
 
     char *json = tool_names_json(a);
     ASSERT_NOT_NULL(json);
@@ -313,7 +313,7 @@ TEST(test_tool_names_json_excludes_tool_search) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop, TOOL_SAFE_MUTATING);
     tool_search_register();
 
     char *json = tool_names_json(a);
@@ -347,7 +347,7 @@ TEST(test_tool_schemas_json_includes_full_schema) {
 
     tool_register("mytool",
                   "{\"name\":\"mytool\",\"description\":\"does stuff\"}",
-                  handler_noop);
+                  handler_noop, TOOL_SAFE_READONLY);
 
     char *json = tool_schemas_json(a);
     ASSERT_NOT_NULL(json);
@@ -363,7 +363,7 @@ TEST(test_tool_schemas_json_includes_tool_search) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{\"name\":\"bash\"}", handler_noop);
+    tool_register("bash", "{\"name\":\"bash\"}", handler_noop, TOOL_SAFE_MUTATING);
     tool_search_register();
 
     char *json = tool_schemas_json(a);
@@ -385,7 +385,7 @@ TEST(test_tool_search_returns_schema) {
 
     tool_register("mytool",
                   "{\"name\":\"mytool\",\"description\":\"test tool\"}",
-                  handler_noop);
+                  handler_noop, TOOL_SAFE_READONLY);
     tool_search_register();
 
     ToolResult r = tool_invoke(a, "tool_search", "{\"name\":\"mytool\"}");
@@ -431,7 +431,7 @@ TEST(test_tool_search_schema_roundtrip) {
     ASSERT_NOT_NULL(a);
 
     const char *schema = "{\"name\":\"round\",\"description\":\"roundtrip\"}";
-    tool_register("round", schema, handler_noop);
+    tool_register("round", schema, handler_noop, TOOL_SAFE_READONLY);
     tool_search_register();
 
     ToolResult r = tool_invoke(a, "tool_search", "{\"name\":\"round\"}");
@@ -451,7 +451,7 @@ TEST(test_plan_mode_blocks_bash) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_PLAN);
 
     ToolResult r = tool_invoke(a, "bash", "{}");
@@ -468,7 +468,7 @@ TEST(test_plan_mode_blocks_write_file) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("write_file", "{}", handler_noop);
+    tool_register("write_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_PLAN);
 
     ToolResult r = tool_invoke(a, "write_file", "{}");
@@ -485,7 +485,7 @@ TEST(test_plan_mode_blocks_edit_file) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("edit_file", "{}", handler_noop);
+    tool_register("edit_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_PLAN);
 
     ToolResult r = tool_invoke(a, "edit_file", "{}");
@@ -502,9 +502,9 @@ TEST(test_plan_mode_allows_read_tools) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("read_file", "{}", handler_noop);
-    tool_register("grep", "{}", handler_noop);
-    tool_register("glob", "{}", handler_noop);
+    tool_register("read_file", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("grep", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("glob", "{}", handler_noop, TOOL_SAFE_READONLY);
     executor_set_mode(EXEC_MODE_PLAN);
 
     ToolResult r1 = tool_invoke(a, "read_file", "{}");
@@ -525,7 +525,7 @@ TEST(test_plan_mode_toggle_restores_normal) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_PLAN);
 
     ToolResult r1 = tool_invoke(a, "bash", "{}");
@@ -543,12 +543,12 @@ TEST(test_registry_reset_clears_plan_mode) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     executor_set_mode(EXEC_MODE_PLAN);
     ASSERT_EQ(executor_get_mode(), EXEC_MODE_PLAN);
 
     tool_registry_reset();
-    tool_register("bash", "{}", handler_noop);
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
     ASSERT_EQ(executor_get_mode(), EXEC_MODE_NORMAL);
 
     ToolResult r = tool_invoke(a, "bash", "{}");
@@ -582,7 +582,7 @@ TEST(test_tool_event_cb_fires_on_success) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("test", "{}", handler_noop);
+    tool_register("test", "{}", handler_noop, TOOL_SAFE_MUTATING);
 
     EventLog log = {0};
     executor_set_tool_event_cb(event_logger, &log);
@@ -601,7 +601,7 @@ TEST(test_tool_event_cb_fires_error_on_tool_error) {
     ASSERT_NOT_NULL(a);
 
     /* handler_fail returns error=1 */
-    tool_register("bad", "{}", handler_fail);
+    tool_register("bad", "{}", handler_fail, TOOL_SAFE_MUTATING);
 
     EventLog log = {0};
     executor_set_tool_event_cb(event_logger, &log);
@@ -637,18 +637,126 @@ TEST(test_tool_event_cb_cleared_by_reset) {
     Arena *a = arena_new(4096);
     ASSERT_NOT_NULL(a);
 
-    tool_register("test", "{}", handler_noop);
+    tool_register("test", "{}", handler_noop, TOOL_SAFE_MUTATING);
     EventLog log = {0};
     executor_set_tool_event_cb(event_logger, &log);
 
     tool_registry_reset();
-    tool_register("test", "{}", handler_noop);
+    tool_register("test", "{}", handler_noop, TOOL_SAFE_MUTATING);
 
     tool_invoke(a, "test", "{}");
     ASSERT_EQ(log.start_count, 0);  /* callback was cleared */
 
     arena_free(a);
 }
+
+/* -------------------------------------------------------------------------
+ * ToolSafety classification
+ * ---------------------------------------------------------------------- */
+
+TEST(test_safety_readonly_tools) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("read_file", "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("grep",      "{}", handler_noop, TOOL_SAFE_READONLY);
+    tool_register("glob",      "{}", handler_noop, TOOL_SAFE_READONLY);
+
+    ASSERT_EQ((int)tool_get_safety("read_file"), (int)TOOL_SAFE_READONLY);
+    ASSERT_EQ((int)tool_get_safety("grep"),      (int)TOOL_SAFE_READONLY);
+    ASSERT_EQ((int)tool_get_safety("glob"),      (int)TOOL_SAFE_READONLY);
+
+    arena_free(a);
+}
+
+TEST(test_safety_mutating_tools) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash",       "{}", handler_noop, TOOL_SAFE_MUTATING);
+    tool_register("write_file", "{}", handler_noop, TOOL_SAFE_MUTATING);
+    tool_register("edit_file",  "{}", handler_noop, TOOL_SAFE_MUTATING);
+
+    ASSERT_EQ((int)tool_get_safety("bash"),       (int)TOOL_SAFE_MUTATING);
+    ASSERT_EQ((int)tool_get_safety("write_file"), (int)TOOL_SAFE_MUTATING);
+    ASSERT_EQ((int)tool_get_safety("edit_file"),  (int)TOOL_SAFE_MUTATING);
+
+    arena_free(a);
+}
+
+TEST(test_safety_unknown_tool_defaults_to_mutating) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    ASSERT_EQ((int)tool_get_safety("nonexistent"), (int)TOOL_SAFE_MUTATING);
+
+    arena_free(a);
+}
+
+TEST(test_safety_mixed_registration) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash",      "{}", handler_noop, TOOL_SAFE_MUTATING);
+    tool_register("read_file", "{}", handler_noop, TOOL_SAFE_READONLY);
+
+    ASSERT_EQ((int)tool_get_safety("bash"),      (int)TOOL_SAFE_MUTATING);
+    ASSERT_EQ((int)tool_get_safety("read_file"), (int)TOOL_SAFE_READONLY);
+
+    arena_free(a);
+}
+
+TEST(test_invoke_noside_returns_same_result) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("echo", "{}", handler_echo, TOOL_SAFE_READONLY);
+
+    ToolResult r1 = tool_invoke(a, "echo", "{\"k\":1}");
+    ToolResult r2 = tool_invoke_noside(a, "echo", "{\"k\":1}");
+
+    ASSERT_EQ(r1.error, r2.error);
+    ASSERT_NOT_NULL(r1.content);
+    ASSERT_NOT_NULL(r2.content);
+    ASSERT_STR_EQ(r1.content, r2.content);
+
+    arena_free(a);
+}
+
+TEST(test_invoke_noside_unknown_tool_returns_error) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    ToolResult r = tool_invoke_noside(a, "no_such_tool", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_NOT_NULL(r.content);
+    ASSERT_TRUE(strstr(r.content, "no_such_tool") != NULL);
+
+    arena_free(a);
+}
+
+TEST(test_invoke_noside_respects_plan_mode) {
+    tool_registry_reset();
+    Arena *a = arena_new(4096);
+    ASSERT_NOT_NULL(a);
+
+    tool_register("bash", "{}", handler_noop, TOOL_SAFE_MUTATING);
+    executor_set_mode(EXEC_MODE_PLAN);
+
+    ToolResult r = tool_invoke_noside(a, "bash", "{}");
+    ASSERT_EQ(r.error, 1);
+    ASSERT_TRUE(strstr(r.content, "plan mode") != NULL);
+
+    executor_set_mode(EXEC_MODE_NORMAL);
+    arena_free(a);
+}
+
 
 int main(void)
 {
@@ -694,6 +802,14 @@ int main(void)
     RUN_TEST(test_tool_event_cb_fires_error_on_tool_error);
     RUN_TEST(test_tool_event_cb_not_fired_for_unknown_tool);
     RUN_TEST(test_tool_event_cb_cleared_by_reset);
+
+    RUN_TEST(test_safety_readonly_tools);
+    RUN_TEST(test_safety_mutating_tools);
+    RUN_TEST(test_safety_unknown_tool_defaults_to_mutating);
+    RUN_TEST(test_safety_mixed_registration);
+    RUN_TEST(test_invoke_noside_returns_same_result);
+    RUN_TEST(test_invoke_noside_unknown_tool_returns_error);
+    RUN_TEST(test_invoke_noside_respects_plan_mode);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

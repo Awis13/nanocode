@@ -806,8 +806,8 @@ ToolResult fileops_glob(Arena *arena, const char *args_json)
 
 void fileops_register_all(void)
 {
-    tool_register("read_file",  READ_SCHEMA,  fileops_read);
-    tool_register("write_file", WRITE_SCHEMA, fileops_write);
-    tool_register("edit_file",  EDIT_SCHEMA,  fileops_edit);
-    tool_register("glob",       GLOB_SCHEMA,  fileops_glob);
+    tool_register("read_file", READ_SCHEMA, fileops_read, TOOL_SAFE_READONLY);
+    tool_register("write_file", WRITE_SCHEMA, fileops_write, TOOL_SAFE_MUTATING);
+    tool_register("edit_file", EDIT_SCHEMA, fileops_edit, TOOL_SAFE_MUTATING);
+    tool_register("glob", GLOB_SCHEMA, fileops_glob, TOOL_SAFE_READONLY);
 }

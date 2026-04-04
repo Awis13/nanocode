@@ -15,6 +15,7 @@
 #include "../include/audit.h"
 #include "../include/config.h"
 #include "../include/history.h"
+#include "../include/profile.h"
 #include "../include/editor.h"
 #include "../include/json_output.h"
 #include "../include/oneshot.h"
@@ -242,6 +243,9 @@ int main(int argc, char **argv)
      * -c <instruction>           one-shot non-interactive execution
      * --command <instruction>    one-shot non-interactive execution (long form)
      * --auto-apply               apply all file changes without prompting
+     * --model <name>             override provider.model (CMP-382)
+     * --profile <name>           force a specific provider profile (CMP-382)
+     * --list-profiles            list available provider profiles and exit (CMP-382)
      * -------------------------------------------------------------------- */
     int         cli_json            = 0;
     int         cli_sandbox         = 0;
@@ -254,6 +258,9 @@ int main(int argc, char **argv)
     const char *cli_search          = NULL; /* --search <term>: grep history, exit */
     const char *cli_instruction     = NULL; /* positional arg for pipe mode */
     const char *cli_sandbox_profile = NULL;
+    const char *cli_model           = NULL; /* --model: override provider.model (CMP-382) */
+    const char *cli_profile_name    = NULL; /* --profile: force profile name (CMP-382) */
+    int         cli_list_profiles   = 0;   /* --list-profiles: list and exit (CMP-382) */
     char        cli_timeout_arg[64] = "";
     OneShotFlags oneshot;
     memset(&oneshot, 0, sizeof(oneshot));
@@ -316,6 +323,20 @@ int main(int argc, char **argv)
                 return 1;
             }
             cli_search = argv[++i];
+        } else if (strcmp(argv[i], "--model") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "nanocode: --model requires a model name\n");
+                return 1;
+            }
+            cli_model = argv[++i];
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "nanocode: --profile requires a profile name\n");
+                return 1;
+            }
+            cli_profile_name = argv[++i];
+        } else if (strcmp(argv[i], "--list-profiles") == 0) {
+            cli_list_profiles = 1;
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -349,9 +370,17 @@ int main(int argc, char **argv)
         }
         PipeArgs pargs;
         pargs.instruction = cli_instruction;
-        pargs.model       = NULL;
+        pargs.model       = cli_model;
         pargs.raw         = cli_raw;
         return pipe_run(&pargs);
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 1.55: --list-profiles — list available provider profiles and exit.
+     * -------------------------------------------------------------------- */
+    if (cli_list_profiles) {
+        profile_list();
+        return 0;
     }
 
     /* -----------------------------------------------------------------------
@@ -410,6 +439,10 @@ int main(int argc, char **argv)
         const char *api_key    = config_get_str(cfg, "provider.api_key");
         int         port_cfg   = config_get_int(cfg, "provider.port");
 
+        /* CLI --model overrides config (CMP-382) */
+        if (cli_model)
+            model = cli_model;
+
         ProviderType ptype = PROVIDER_CLAUDE;
         if (type_str && strcmp(type_str, "openai") == 0)
             ptype = PROVIDER_OPENAI;
@@ -436,6 +469,36 @@ int main(int argc, char **argv)
         provider_cfg.api_key         = api_key;
         provider_cfg.model           = model ? model : "claude-opus-4-6";
         provider_cfg.thinking_budget = 0;
+        provider_cfg.system_cache_static = NULL;
+        /* New sampling fields — defaults mean "unset / use provider default" */
+        provider_cfg.temperature_x1000 = -1;
+        provider_cfg.top_p_x1000       = -1;
+        provider_cfg.max_output_tokens  = 0;
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 2.6: Load provider profile and apply to ProviderConfig (CMP-382).
+     *
+     * Priority: --profile flag > auto-select by model name
+     * Profile fields are lower priority than any future explicit CLI flags.
+     * -------------------------------------------------------------------- */
+    {
+        ProviderProfile *prof;
+        if (cli_profile_name)
+            prof = profile_load(arena, cli_profile_name);
+        else
+            prof = profile_for_model(arena, provider_cfg.model);
+
+        if (prof) {
+            if (prof->thinking_budget > 0 && provider_cfg.thinking_budget == 0)
+                provider_cfg.thinking_budget = prof->thinking_budget;
+            if (prof->temperature_x1000 >= 0 && provider_cfg.temperature_x1000 < 0)
+                provider_cfg.temperature_x1000 = prof->temperature_x1000;
+            if (prof->top_p_x1000 >= 0 && provider_cfg.top_p_x1000 < 0)
+                provider_cfg.top_p_x1000 = prof->top_p_x1000;
+            if (prof->max_output_tokens > 0 && provider_cfg.max_output_tokens == 0)
+                provider_cfg.max_output_tokens = prof->max_output_tokens;
+        }
     }
 
     /* -----------------------------------------------------------------------

@@ -42,6 +42,16 @@ typedef struct {
      * Set to NULL to use the simple string format (backward compatible).
      */
     const char   *system_cache_static;
+    /*
+     * Profile-sourced sampling parameters (CMP-382).
+     * Values come from the active ProviderProfile; 0/-1 means "use default".
+     *   temperature_x1000  — temperature * 1000; -1 = unset (omit from body)
+     *   top_p_x1000        — top_p * 1000;        -1 = unset (omit from body)
+     *   max_output_tokens  — 0 = use per-provider hardcoded default
+     */
+    int           temperature_x1000;
+    int           top_p_x1000;
+    int           max_output_tokens;
 } ProviderConfig;
 
 /*

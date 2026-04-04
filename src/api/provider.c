@@ -279,19 +279,22 @@ static void json_escape(Buf *b, const char *s)
     }
 }
 
-static int build_claude_body(Buf *b, const char *model,
-                              const Message *msgs, int nmsg,
-                              int thinking_budget,
-                              const char *system_cache_static)
+static int build_claude_body(Buf *b, const ProviderConfig *cfg,
+                              const Message *msgs, int nmsg)
 {
+    const char *model                = cfg->model;
+    int         thinking_budget      = cfg->thinking_budget;
+    const char *system_cache_static  = cfg->system_cache_static;
+
     buf_append_str(b, "{\"model\":\"");
     json_escape(b, model);
 
     /* Extended thinking: budget_tokens controls allocation; max_tokens must
      * be at least budget + 1000 to leave room for the visible response. */
-    int max_tokens = 4096;
+    int max_tokens = (cfg->max_output_tokens > 0) ? cfg->max_output_tokens : 8192;
     if (thinking_budget > 0) {
-        max_tokens = thinking_budget + 4096;
+        if (max_tokens < thinking_budget + 1000)
+            max_tokens = thinking_budget + 4096;
         buf_append_str(b, "\",\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":");
         char num[32];
         snprintf(num, sizeof(num), "%d", thinking_budget);
@@ -306,6 +309,23 @@ static int build_claude_body(Buf *b, const char *model,
     buf_append_str(b, ",\"max_tokens\":");
     buf_append_str(b, max_tokens_str);
     buf_append_str(b, ",\"stream\":true");
+
+    /* Temperature (CMP-382): omit when unset (-1) */
+    if (cfg->temperature_x1000 >= 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%.3f",
+                 (double)cfg->temperature_x1000 / 1000.0);
+        buf_append_str(b, ",\"temperature\":");
+        buf_append_str(b, tmp);
+    }
+    /* top_p (CMP-382): omit when unset (-1) */
+    if (cfg->top_p_x1000 >= 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%.3f",
+                 (double)cfg->top_p_x1000 / 1000.0);
+        buf_append_str(b, ",\"top_p\":");
+        buf_append_str(b, tmp);
+    }
 
     /* Scan for a system role message and emit it as the top-level field.
      *
@@ -359,13 +379,36 @@ static int build_claude_body(Buf *b, const char *model,
     return buf_append_str(b, "]}");
 }
 
-static int build_ollama_body(Buf *b, const char *model,
+static int build_ollama_body(Buf *b, const ProviderConfig *cfg,
                               const Message *msgs, int nmsg)
 {
     buf_append_str(b, "{\"model\":\"");
-    json_escape(b, model);
+    json_escape(b, cfg->model);
     /* think:false disables extended reasoning in qwen3/qwen3.5 */
-    buf_append_str(b, "\",\"stream\":true,\"think\":false,\"messages\":[");
+    buf_append_str(b, "\",\"stream\":true,\"think\":false");
+
+    if (cfg->max_output_tokens > 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%d", cfg->max_output_tokens);
+        buf_append_str(b, ",\"num_predict\":");
+        buf_append_str(b, tmp);
+    }
+    if (cfg->temperature_x1000 >= 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%.3f",
+                 (double)cfg->temperature_x1000 / 1000.0);
+        buf_append_str(b, ",\"temperature\":");
+        buf_append_str(b, tmp);
+    }
+    if (cfg->top_p_x1000 >= 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%.3f",
+                 (double)cfg->top_p_x1000 / 1000.0);
+        buf_append_str(b, ",\"top_p\":");
+        buf_append_str(b, tmp);
+    }
+
+    buf_append_str(b, ",\"messages\":[");
     for (int i = 0; i < nmsg; i++) {
         if (i > 0) buf_append_str(b, ",");
         buf_append_str(b, "{\"role\":\"");
@@ -377,13 +420,36 @@ static int build_ollama_body(Buf *b, const char *model,
     return buf_append_str(b, "]}");
 }
 
-static int build_openai_body(Buf *b, const char *model,
+static int build_openai_body(Buf *b, const ProviderConfig *cfg,
                               const Message *msgs, int nmsg)
 {
     buf_append_str(b, "{\"model\":\"");
-    json_escape(b, model);
+    json_escape(b, cfg->model);
     /* think:false disables extended reasoning on Ollama's qwen3/qwen3.5 */
-    buf_append_str(b, "\",\"stream\":true,\"think\":false,\"messages\":[");
+    buf_append_str(b, "\",\"stream\":true,\"think\":false");
+
+    if (cfg->max_output_tokens > 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%d", cfg->max_output_tokens);
+        buf_append_str(b, ",\"max_tokens\":");
+        buf_append_str(b, tmp);
+    }
+    if (cfg->temperature_x1000 >= 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%.3f",
+                 (double)cfg->temperature_x1000 / 1000.0);
+        buf_append_str(b, ",\"temperature\":");
+        buf_append_str(b, tmp);
+    }
+    if (cfg->top_p_x1000 >= 0) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%.3f",
+                 (double)cfg->top_p_x1000 / 1000.0);
+        buf_append_str(b, ",\"top_p\":");
+        buf_append_str(b, tmp);
+    }
+
+    buf_append_str(b, ",\"messages\":[");
     for (int i = 0; i < nmsg; i++) {
         if (i > 0) buf_append_str(b, ",");
         buf_append_str(b, "{\"role\":\"");
@@ -440,13 +506,11 @@ int provider_stream(Provider *p,
     buf_reset(&p->body_buf);
     int r;
     if (p->cfg.type == PROVIDER_CLAUDE)
-        r = build_claude_body(&p->body_buf, p->cfg.model, msgs, nmsg,
-                              p->cfg.thinking_budget,
-                              p->cfg.system_cache_static);
+        r = build_claude_body(&p->body_buf, &p->cfg, msgs, nmsg);
     else if (p->cfg.type == PROVIDER_OLLAMA)
-        r = build_ollama_body(&p->body_buf, p->cfg.model, msgs, nmsg);
+        r = build_ollama_body(&p->body_buf, &p->cfg, msgs, nmsg);
     else
-        r = build_openai_body(&p->body_buf, p->cfg.model, msgs, nmsg);
+        r = build_openai_body(&p->body_buf, &p->cfg, msgs, nmsg);
     if (r < 0)
         return -1;
 

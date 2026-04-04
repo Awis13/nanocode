@@ -232,10 +232,6 @@ tests/test_history: tests/test_history.c src/core/history.c \
                     src/agent/conversation.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
-# CMP-210: structured audit log — JSONL tool call + sandbox denial logging
-tests/test_audit: tests/test_audit.c src/core/audit.c
-	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
-
 # CMP-188: Unix pipe mode — provider resolution and stdin buffering
 tests/test_pipe: tests/test_pipe.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^

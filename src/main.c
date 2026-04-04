@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "../include/audit.h"
 #include "../include/benchmark.h"
@@ -24,6 +25,7 @@
 #include "../include/sandbox.h"
 #include "../include/status_file.h"
 #include "../include/daemon.h"
+#include "../src/tui/renderer.h"
 #include "../src/agent/conversation.h"
 #include "../src/agent/prompt.h"
 #include "../src/api/provider.h"

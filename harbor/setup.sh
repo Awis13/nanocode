@@ -30,9 +30,9 @@ git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$BUILD_DIR"
 echo "[nanocode setup] Building nanocode (RELEASE=1)..."
 cd "$BUILD_DIR"
 git submodule update --init vendor/bearssl vendor/jsmn
-# Expose POSIX.1-2001 symbols (getaddrinfo, strncasecmp, etc.) on Linux.
-# Required under -std=c11 on glibc where POSIX extensions are hidden by default.
-printf 'CFLAGS += -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE\n' >> Makefile
+# Linux portability: expose POSIX/glibc symbols hidden under -std=c11,
+# and force-include stdint.h for uint32_t used in Landlock bindings.
+printf 'CFLAGS += -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -include stdint.h\n' >> Makefile
 make all RELEASE=1
 
 echo "[nanocode setup] Installing binary to ${INSTALL_PREFIX}/bin/..."

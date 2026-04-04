@@ -14,6 +14,7 @@
 
 #include "../include/audit.h"
 #include "../include/config.h"
+#include "../include/profile.h"
 #include "../include/history.h"
 #include "../include/profile.h"
 #include "../include/editor.h"
@@ -27,6 +28,7 @@
 #include "../src/api/provider.h"
 #include "../src/core/loop.h"
 #include "../src/util/arena.h"
+#include "../src/util/buf.h"
 #include "../src/util/duration.h"
 #include "../src/tools/bash.h"
 #include "../src/tools/executor.h"
@@ -680,6 +682,7 @@ int main(int argc, char **argv)
             prof = profile_for_model(arena, provider_cfg.model);
 
         if (prof) {
+            /* Apply profile values that have not been overridden via CLI */
             if (prof->thinking_budget > 0 && provider_cfg.thinking_budget == 0)
                 provider_cfg.thinking_budget = prof->thinking_budget;
             if (prof->temperature_x1000 >= 0 && provider_cfg.temperature_x1000 < 0)

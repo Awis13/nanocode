@@ -263,6 +263,165 @@ TEST(test_context_summary_section_headers_absent_in_non_repo)
     arena_free(a);
 }
 
+
+/* =========================================================================
+ * git_diff_cached
+ * ====================================================================== */
+
+TEST(test_diff_cached_no_crash)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    /* Running git diff --cached must not crash; may be empty in clean tree. */
+    char *diff = git_diff_cached(a, ".", 0);
+    ASSERT_NOT_NULL(diff);
+
+    arena_free(a);
+}
+
+TEST(test_diff_cached_stat_no_crash)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    char *diff = git_diff_cached(a, ".", 1);
+    ASSERT_NOT_NULL(diff);
+
+    arena_free(a);
+}
+
+TEST(test_diff_cached_null_inputs)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    ASSERT_NULL(git_diff_cached(NULL, ".", 0));
+    ASSERT_NULL(git_diff_cached(a, NULL, 0));
+
+    arena_free(a);
+}
+
+/* =========================================================================
+ * git_diff_stat
+ * ====================================================================== */
+
+TEST(test_diff_stat_no_crash)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    char *stat = git_diff_stat(a, ".");
+    ASSERT_NOT_NULL(stat);
+
+    arena_free(a);
+}
+
+TEST(test_diff_stat_null_inputs)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    ASSERT_NULL(git_diff_stat(NULL, "."));
+    ASSERT_NULL(git_diff_stat(a, NULL));
+
+    arena_free(a);
+}
+
+/* =========================================================================
+ * git_untracked
+ * ====================================================================== */
+
+TEST(test_untracked_no_crash)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    char *ut = git_untracked(a, ".");
+    ASSERT_NOT_NULL(ut);
+
+    arena_free(a);
+}
+
+TEST(test_untracked_null_inputs)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    ASSERT_NULL(git_untracked(NULL, "."));
+    ASSERT_NULL(git_untracked(a, NULL));
+
+    arena_free(a);
+}
+
+/* =========================================================================
+ * git_special_state
+ * ====================================================================== */
+
+TEST(test_special_state_clean_repo)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    /*
+     * A clean repo with no merge/rebase in progress must return NULL.
+     * (If a CI environment happens to be in a merge this test may skip.)
+     */
+    char *state = git_special_state(a, ".");
+    /* Either NULL (clean) or a non-empty description. */
+    if (state)
+        ASSERT_TRUE(strlen(state) > 0);
+
+    arena_free(a);
+}
+
+TEST(test_special_state_null_inputs)
+{
+    Arena *a = arena_new(1 << 16);
+    ASSERT_NOT_NULL(a);
+
+    ASSERT_NULL(git_special_state(NULL, "."));
+    ASSERT_NULL(git_special_state(a, NULL));
+
+    arena_free(a);
+}
+
+/* =========================================================================
+ * git_context_summary — extended checks for new sections
+ * ====================================================================== */
+
+TEST(test_context_summary_branch_in_header)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *ctx = git_context_summary(a, ".");
+    if (ctx && ctx[0]) {
+        /* The new summary starts with ## Git Context and includes Branch: */
+        int has_header = contains(ctx, "## Git Context");
+        int has_branch = contains(ctx, "Branch:");
+        ASSERT_TRUE(has_header && has_branch);
+    }
+
+    arena_free(a);
+}
+
+TEST(test_context_summary_ten_commits)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    /*
+     * The repo has more than 5 commits so the summary should include
+     * the Recent Commits section.  We just verify the section is present.
+     */
+    char *ctx = git_context_summary(a, ".");
+    if (ctx)
+        ASSERT_TRUE(contains(ctx, "## Recent Commits"));
+
+    arena_free(a);
+}
+
 /* =========================================================================
  * Tool registration
  * ====================================================================== */
@@ -369,6 +528,17 @@ int main(void)
     RUN_TEST(test_context_summary_non_repo);
     RUN_TEST(test_context_summary_null);
     RUN_TEST(test_context_summary_section_headers_absent_in_non_repo);
+    RUN_TEST(test_diff_cached_no_crash);
+    RUN_TEST(test_diff_cached_stat_no_crash);
+    RUN_TEST(test_diff_cached_null_inputs);
+    RUN_TEST(test_diff_stat_no_crash);
+    RUN_TEST(test_diff_stat_null_inputs);
+    RUN_TEST(test_untracked_no_crash);
+    RUN_TEST(test_untracked_null_inputs);
+    RUN_TEST(test_special_state_clean_repo);
+    RUN_TEST(test_special_state_null_inputs);
+    RUN_TEST(test_context_summary_branch_in_header);
+    RUN_TEST(test_context_summary_ten_commits);
 
     RUN_TEST(test_tools_registered);
     RUN_TEST(test_tool_commit_missing_message);

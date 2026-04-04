@@ -2,13 +2,15 @@
  * prompt.h — system prompt builder
  *
  * Assembles the system prompt from project context:
+ *
  *   1. Base identity          \
  *   2. Available tools         > static — rarely changes, safe to cache
  *   3. Sandbox policy block   /
  *
  *   4. Project detection      \
  *   5. CLAUDE.md / .nanocode.md\
- *   6. Git status              > dynamic — rebuilt each turn
+ *   6. Git context             > dynamic — rebuilt each turn
+ *      (skipped when no_git)   |
  *   7. Environment bootstrap   |
  *   8. Working directory       |
  *   9. Budget hint (optional) /
@@ -46,7 +48,7 @@
  * static_part  — base identity, tools, sandbox: rarely changes across turns.
  *                Safe to use as a prompt-cache boundary for providers that
  *                support cache_control (e.g. Claude extended caching).
- * dynamic_part — project detection, CLAUDE.md, git status, environment,
+ * dynamic_part — project detection, CLAUDE.md, git context, environment,
  *                working directory, and optional budget hint: rebuilt each turn.
  *
  * Both fields are arena-allocated NUL-terminated strings.
@@ -70,12 +72,14 @@ typedef struct {
  *                   hint is appended to the dynamic section so the model can
  *                   adapt its verbosity.  Pass 0 to omit the hint; the rest of
  *                   the prompt is unaffected.
+ * `no_git`        — when non-zero, skip all git context collection (--no-git flag).
  *
  * Returns a PromptParts struct; either field may be NULL on allocation failure.
  * Both fields are NULL if arena or cwd is NULL.
  */
 PromptParts prompt_build_parts(Arena *arena, const char *cwd, void *exec,
-                                const SandboxConfig *sc, size_t budget_tokens);
+                                const SandboxConfig *sc, size_t budget_tokens,
+                                int no_git);
 
 /*
  * prompt_build — build the system prompt as a single concatenated string.
@@ -84,9 +88,11 @@ PromptParts prompt_build_parts(Arena *arena, const char *cwd, void *exec,
  * sections.  Provided for backward compatibility; prefer prompt_build_parts()
  * when the caller needs the static/dynamic split for cache-control.
  *
+ * `no_git` — when non-zero, skip all git context collection (--no-git flag).
+ *
  * Returns an arena-allocated NUL-terminated string, or NULL on failure.
  */
 char *prompt_build(Arena *arena, const char *cwd, void *exec,
-                   const SandboxConfig *sc);
+                   const SandboxConfig *sc, int no_git);
 
 #endif /* PROMPT_H */

@@ -52,6 +52,11 @@ typedef struct {
     int           temperature_x1000;
     int           top_p_x1000;
     int           max_output_tokens;
+    /*
+     * Connection + response timeout in milliseconds (CMP-402).
+     * Set from provider.timeout_sec in config; 0 means use client default (30s).
+     */
+    int           timeout_ms;
 } ProviderConfig;
 
 /*

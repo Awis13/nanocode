@@ -67,6 +67,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_audit \
              tests/test_pipe \
              tests/test_history \
+             tests/test_network_errors \
              tests/test_benchmark \
              tests/test_spinner \
              tests/test_profile
@@ -120,6 +121,10 @@ tests/test_oom: tests/test_oom.c src/util/arena.c
 
 # CMP-144: retry/backoff — requires src/api/retry.c implementation
 tests/test_retry: tests/test_retry.c src/api/retry.c src/api/thinking.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-402: network error message formatting — no BearSSL dependency
+tests/test_network_errors: tests/test_network_errors.c src/api/net_errors.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-118: conversation manager

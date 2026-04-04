@@ -44,4 +44,22 @@ void renderer_free(Renderer *r);
 /* Override terminal width — useful for deterministic unit tests. */
 void renderer_set_width(Renderer *r, int width);
 
+/*
+ * Write-batching frame API (60 fps / 16 ms cadence).
+ *
+ * renderer_frame_begin() starts accumulating output in a 64 KB internal
+ * frame buffer.  All writes via renderer_token() are held until
+ * renderer_frame_end() commits them to fd in a single write syscall.
+ * If the 16 ms deadline expires before renderer_frame_end() is called,
+ * the buffer is flushed automatically so the display never stalls.
+ * No-op if a frame is already active.
+ *
+ * renderer_frame_end() commits the current frame to fd (one bulk write).
+ * This is the "incremental line update" commit point: one bulk write per
+ * frame minimises partial-line updates visible on screen.
+ * No-op if no frame is active.
+ */
+void renderer_frame_begin(Renderer *r);
+void renderer_frame_end(Renderer *r);
+
 #endif /* RENDERER_H */

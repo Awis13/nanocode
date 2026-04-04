@@ -68,7 +68,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_pipe \
              tests/test_history \
              tests/test_benchmark \
-             tests/test_spinner
+             tests/test_spinner \
+             tests/test_profile
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -235,6 +236,10 @@ tests/test_commands: tests/test_commands.c src/tui/commands.c \
 # CMP-143: conversation history — save/resume/search/export
 tests/test_history: tests/test_history.c src/core/history.c \
                     src/agent/conversation.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-382: provider profiles — per-model prompt optimization
+tests/test_profile: tests/test_profile.c src/core/profile.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-188: Unix pipe mode — provider resolution and stdin buffering

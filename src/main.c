@@ -405,7 +405,7 @@ static int oneshot_fileops_cb(const char *path,
  * g_os_loop is set before loop_run() so SIGINT/SIGTERM can stop the loop.
  */
 static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
-                       const SandboxConfig *sc, Arena *arena, int no_git)
+                       const SandboxConfig *sc, Arena *arena)
 {
     /* Resolve instruction: "-" means read from stdin. */
     const char *instruction = flags->command;
@@ -446,7 +446,7 @@ static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
     if (getcwd(cwd, sizeof(cwd)) == NULL)
         cwd[0] = '\0';
 
-    const char *system_prompt = prompt_build(arena, cwd[0] ? cwd : ".", NULL, sc, no_git);
+    const char *system_prompt = prompt_build(arena, cwd[0] ? cwd : ".", NULL, sc, 0);
     if (!system_prompt) {
         fprintf(stderr, "nanocode: failed to build system prompt\n");
         free(stdin_buf);
@@ -578,7 +578,6 @@ int main(int argc, char **argv)
     int         cli_readonly        = 0;
     int         cli_pipe            = 0;
     int         cli_raw             = 0;
-    int         cli_no_git          = 0;  /* --no-git: disable git context */
     int         cli_resume          = 0;  /* --resume: pick and load a past conv */
     const char *cli_search          = NULL; /* --search <term>: grep history, exit */
     const char *cli_instruction     = NULL; /* positional arg for pipe mode */
@@ -914,7 +913,7 @@ int main(int argc, char **argv)
      * Phase 3.7: One-shot dispatch — skip TUI and run a single instruction.
      * -------------------------------------------------------------------- */
     if (oneshot.enabled) {
-        int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena, cli_no_git);
+        int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena);
         audit_close(g_audit);
         arena_free(arena);
         return rc;

@@ -121,6 +121,10 @@ tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
                          src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
+# CMP-210: structured audit log — JSONL tool call + sandbox denial logging
+tests/test_audit: tests/test_audit.c src/core/audit.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
 # CMP-121: system prompt builder
 tests/test_prompt: tests/test_prompt.c src/agent/prompt.c src/agent/git.c \
                    src/tools/executor.c src/tools/memory.c src/util/arena.c \

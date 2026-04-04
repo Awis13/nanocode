@@ -7,10 +7,9 @@ Usage (from the harbor/ directory):
 Environment variables:
     NANOCODE_REPO_URL   optional — git repo to clone (default: GitHub main)
     NANOCODE_REF        optional — branch/tag/commit (default: main)
-    OLLAMA_HOST         optional — Ollama base URL (default: http://host.docker.internal:11434)
-    OLLAMA_MODEL        optional — model to use (default: gemma4:26b)
-
-Note: nanocode uses Ollama for local inference. No Anthropic API key is required.
+    NANOCODE_MODEL      optional — model ID passed to nanocode (default: gemma4:26b)
+    OLLAMA_BASE_URL     optional — Ollama URL (default: http://host.docker.internal:11434)
+    ANTHROPIC_API_KEY   optional — only needed if using Anthropic provider
 """
 
 import os
@@ -47,6 +46,12 @@ class NanocodeAgent(AbstractInstalledAgent):
     @property
     def _env(self) -> dict[str, str]:
         env: dict[str, str] = {}
+
+        # Pass API key only if set (not required for Ollama).
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+
         # Propagate repo source overrides so setup.sh can use them.
         if self._repo_url:
             env["NANOCODE_REPO_URL"] = self._repo_url
@@ -58,14 +63,17 @@ class NanocodeAgent(AbstractInstalledAgent):
         elif "NANOCODE_REF" in os.environ:
             env["NANOCODE_REF"] = os.environ["NANOCODE_REF"]
 
-        # Ollama configuration passed to setup.sh to write config.toml.
-        env["OLLAMA_HOST"] = os.environ.get(
-            "OLLAMA_HOST", "http://host.docker.internal:11434"
-        )
-        env["OLLAMA_MODEL"] = (
-            self._model_name
-            or os.environ.get("OLLAMA_MODEL", "gemma4:26b")
-        )
+        # Ollama provider settings forwarded to setup.sh for config generation.
+        for key in ("OLLAMA_BASE_URL", "NANOCODE_MODEL"):
+            if key in os.environ:
+                env[key] = os.environ[key]
+
+        # Model override for nanocode CLI --model flag.
+        model = self._model_name
+        if model is None:
+            model = os.environ.get("NANOCODE_MODEL") or os.environ.get("ANTHROPIC_MODEL")
+        if model:
+            env["NANOCODE_MODEL"] = model.removeprefix("anthropic/")
 
         return env
 
@@ -76,7 +84,7 @@ class NanocodeAgent(AbstractInstalledAgent):
     def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
         cmd_parts = ["nanocode"]
 
-        model = self._model_name or os.environ.get("ANTHROPIC_MODEL")
+        model = self._model_name or os.environ.get("NANOCODE_MODEL") or os.environ.get("ANTHROPIC_MODEL")
         if model:
             cmd_parts += ["--model", model.removeprefix("anthropic/")]
 

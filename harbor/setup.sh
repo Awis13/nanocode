@@ -5,6 +5,8 @@
 # Expected env vars (set by agent.py):
 #   NANOCODE_REPO_URL   — git repo to clone (default: GitHub)
 #   NANOCODE_REF        — branch/tag/commit to check out (default: main)
+#   NANOCODE_MODEL      — model to use (default: gemma4:26b via Ollama)
+#   OLLAMA_BASE_URL     — Ollama base URL (default: http://host.docker.internal:11434)
 
 set -euo pipefail
 
@@ -27,29 +29,27 @@ git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$BUILD_DIR"
 
 echo "[nanocode setup] Building nanocode (RELEASE=1)..."
 cd "$BUILD_DIR"
-make RELEASE=1
+git submodule update --init vendor/bearssl vendor/jsmn
+# Linux portability: expose POSIX/glibc symbols hidden under -std=c11,
+# and force-include stdint.h for uint32_t used in Landlock bindings.
+printf 'CFLAGS += -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -include stdint.h\n' >> Makefile
+make all RELEASE=1
 
 echo "[nanocode setup] Installing binary to ${INSTALL_PREFIX}/bin/..."
 install -m 755 nanocode "${INSTALL_PREFIX}/bin/nanocode"
 
+echo "[nanocode setup] Configuring nanocode for Ollama..."
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+NANOCODE_MODEL="${NANOCODE_MODEL:-gemma4:26b}"
+CONFIG_DIR="$HOME/.config/nanocode"
+mkdir -p "$CONFIG_DIR"
+cat > "$CONFIG_DIR/config.toml" <<EOF
+[provider]
+base_url = "${OLLAMA_BASE_URL}"
+model    = "${NANOCODE_MODEL}"
+EOF
+
 echo "[nanocode setup] Verifying install..."
 nanocode --version 2>/dev/null || nanocode --help 2>/dev/null || true
-
-echo "[nanocode setup] Writing Ollama config..."
-_OLLAMA_HOST="${OLLAMA_HOST:-http://host.docker.internal:11434}"
-_OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:26b}"
-_CONFIG_DIR="${HOME}/.nanocode"
-mkdir -p "$_CONFIG_DIR"
-cat > "${_CONFIG_DIR}/config.toml" << TOML_EOF
-[provider]
-type = "ollama"
-base_url = "host.docker.internal"
-port = 11434
-model = "${_OLLAMA_MODEL}"
-
-[session]
-mode = "normal"
-TOML_EOF
-echo "[nanocode setup] Ollama config written: provider.type=ollama model=${_OLLAMA_MODEL}"
 
 echo "[nanocode setup] Done."

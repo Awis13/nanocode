@@ -36,8 +36,10 @@
 
 static const struct { const char *key; const char *val; } s_defaults[] = {
     /* [provider] */
-    { "provider.api_key",              ""                           },
-    { "provider.base_url",             "https://api.anthropic.com" },
+    { "provider.type",                 "claude"                    },
+    { "provider.api_key",              ""                          },
+    { "provider.base_url",             "api.anthropic.com"         },
+    { "provider.port",                 "0"                         },
     { "provider.model",                "claude-opus-4-6"           },
     { "provider.timeout_ms",           "30000"                     },
     /* [sandbox] */
@@ -107,10 +109,12 @@ static const char s_default_toml_a[] =
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "[provider]\n"
-    "api_key      = \"\"                      # API key (or set ANTHROPIC_API_KEY)\n"
-    "base_url     = \"https://api.anthropic.com\"  # API endpoint\n"
-    "model        = \"claude-opus-4-6\"       # Model ID\n"
-    "timeout_ms   = 30000                   # Request timeout in milliseconds\n"
+    "type         = \"claude\"               # Provider: claude | openai | ollama\n"
+    "api_key      = \"\"                     # API key (or set ANTHROPIC_API_KEY)\n"
+    "base_url     = \"api.anthropic.com\"    # API hostname (no scheme; use port for Ollama)\n"
+    "port         = 0                      # Port override (0 = default: 443 for claude, 11434 for openai/ollama)\n"
+    "model        = \"claude-opus-4-6\"      # Model ID\n"
+    "timeout_ms   = 30000                  # Request timeout in milliseconds\n"
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "[sandbox]\n"

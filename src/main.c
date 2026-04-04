@@ -28,6 +28,7 @@
 #include "../src/tools/bash.h"
 #include "../src/tools/executor.h"
 #include "../src/tools/fileops.h"
+#include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;
 static Loop *g_loop = NULL;
@@ -188,6 +189,9 @@ int main(int argc, char **argv)
     int         cli_daemon          = 0;
     int         cli_dry_run         = 0;
     int         cli_readonly        = 0;
+    int         cli_pipe            = 0;
+    int         cli_raw             = 0;
+    const char *cli_instruction     = NULL; /* positional arg for pipe mode */
     const char *cli_sandbox_profile = NULL;
     char        cli_timeout_arg[64] = "";
     OneShotFlags oneshot;
@@ -239,6 +243,10 @@ int main(int argc, char **argv)
             }
             strncpy(cli_timeout_arg, argv[++i], sizeof(cli_timeout_arg) - 1);
             cli_timeout_arg[sizeof(cli_timeout_arg) - 1] = '\0';
+        } else if (strcmp(argv[i], "--pipe") == 0) {
+            cli_pipe = 1;
+        } else if (strcmp(argv[i], "--raw") == 0) {
+            cli_raw = 1;
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -247,7 +255,34 @@ int main(int argc, char **argv)
                 fprintf(stderr, "%s\n", err);
                 return 1;
             }
+            /* Capture first positional arg as instruction (for pipe mode). */
+            if (rc == 0 && argv[i][0] != '-' && !cli_instruction)
+                cli_instruction = argv[i];
         }
+    }
+
+    /* Auto-detect pipe mode when stdin is not a TTY. */
+    if (!cli_pipe && !isatty(STDIN_FILENO))
+        cli_pipe = 1;
+
+    /* -----------------------------------------------------------------------
+     * Phase 1.5: Pipe mode — early dispatch before full config load.
+     *
+     * pipe_run() resolves provider settings from env vars directly; it does
+     * not need the full nanocode config machinery.
+     * -------------------------------------------------------------------- */
+    if (cli_pipe) {
+        if (!cli_instruction) {
+            fprintf(stderr,
+                    "nanocode: pipe mode requires an instruction argument\n"
+                    "  Example: cat file.c | nanocode --pipe \"explain this\"\n");
+            return 1;
+        }
+        PipeArgs pargs;
+        pargs.instruction = cli_instruction;
+        pargs.model       = NULL;
+        pargs.raw         = cli_raw;
+        return pipe_run(&pargs);
     }
 
     /* -----------------------------------------------------------------------

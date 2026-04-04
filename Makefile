@@ -295,5 +295,5 @@ unit-test: $(TEST_BINS)
 	done; \
 	exit $$failed
 
-test: unit-test
+test: unit-test $(BIN)
 	./tests/run.sh

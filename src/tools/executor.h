@@ -17,14 +17,28 @@
 
 /*
  * Execution mode — controls which tools are permitted to run.
+ *
  * EXEC_MODE_NORMAL   : all registered tools may be invoked.
+ *
  * EXEC_MODE_PLAN     : write/execute tools (bash, write_file, edit_file) are
  *                      blocked; the model may only read and reason.
+ *                      Set by the /plan slash command (agent-initiated).
+ *                      Error message includes a hint to toggle plan mode off.
+ *
  * EXEC_MODE_DRY_RUN  : no tool is actually executed; every call returns a
  *                      synthetic {"dry_run":true} result and a log line is
  *                      emitted to stderr.
+ *                      Set by --dry-run flag or session.mode = "dry-run".
+ *
  * EXEC_MODE_READONLY : write/execute tools (bash, write_file, edit_file) are
  *                      blocked with an error; read tools run normally.
+ *                      Set by --readonly flag or session.mode = "readonly".
+ *                      Use when you want to allow reads but prevent mutations.
+ *
+ * EXEC_MODE_PLAN vs EXEC_MODE_READONLY: both block the same tool set but
+ * serve different contexts. PLAN is agent-toggled mid-session for structured
+ * reasoning; READONLY is a user-imposed constraint at startup. Their error
+ * messages differ to guide the user appropriately in each context.
  */
 typedef enum {
     EXEC_MODE_NORMAL   = 0,

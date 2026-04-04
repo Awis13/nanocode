@@ -269,7 +269,7 @@ int main(int argc, char **argv)
     /* Resolve execution mode: config key first, then CLI flags (higher priority). */
     {
         ExecMode exec_mode = EXEC_MODE_NORMAL;
-        const char *cfg_mode = config_get_str(cfg, "sandbox.mode");
+        const char *cfg_mode = config_get_str(cfg, "session.mode");
         if (cfg_mode && strcmp(cfg_mode, "dry-run") == 0)
             exec_mode = EXEC_MODE_DRY_RUN;
         else if (cfg_mode && strcmp(cfg_mode, "readonly") == 0)

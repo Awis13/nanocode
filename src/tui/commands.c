@@ -6,6 +6,7 @@
  */
 
 #include "commands.h"
+#include "../../include/history.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -37,6 +38,9 @@ static int cmd_diff(int argc, const char **argv, CmdContext *ctx);
 static int cmd_apply(int argc, const char **argv, CmdContext *ctx);
 static int cmd_reject(int argc, const char **argv, CmdContext *ctx);
 static int cmd_mcp(int argc, const char **argv, CmdContext *ctx);
+static int cmd_resume(int argc, const char **argv, CmdContext *ctx);
+static int cmd_search(int argc, const char **argv, CmdContext *ctx);
+static int cmd_export(int argc, const char **argv, CmdContext *ctx);
 
 /* -------------------------------------------------------------------------
  * Static registry
@@ -59,6 +63,9 @@ static const CmdEntry g_cmds[] = {
     { "apply",   "apply pending sandbox changes to disk",    cmd_apply   },
     { "reject",  "discard pending sandbox changes",          cmd_reject  },
     { "mcp",     "list configured MCP servers and status",   cmd_mcp     },
+    { "resume",  "load a previous conversation",             cmd_resume  },
+    { "search",  "search conversation history for a term",  cmd_search  },
+    { "export",  "export conversation to Markdown",          cmd_export  },
 };
 
 #define NCMDS ((int)(sizeof(g_cmds) / sizeof(g_cmds[0])))
@@ -398,4 +405,107 @@ static int cmd_mcp(int argc, const char **argv, CmdContext *ctx)
         cmd_write(fd_o, line);
     }
     return 0;
+}
+
+static int cmd_resume(int argc, const char **argv, CmdContext *ctx)
+{
+    (void)argc; (void)argv;
+    int fd_o = ofd(ctx);
+    int fd_i = ifd(ctx);
+
+    char *paths[HISTORY_LIST_MAX];
+    int n = history_list_recent(paths, HISTORY_LIST_MAX);
+    if (n == 0) {
+        cmd_write(fd_o, "No saved conversations found.\n");
+        return 0;
+    }
+
+    cmd_write(fd_o, "Recent conversations:\n");
+    for (int i = 0; i < n; i++) {
+        char line[CMD_BUF];
+        /* Show basename only for brevity. */
+        const char *base = strrchr(paths[i], '/');
+        base = base ? base + 1 : paths[i];
+        snprintf(line, sizeof(line), "  %d) %s\n", i + 1, base);
+        cmd_write(fd_o, line);
+    }
+    cmd_write(fd_o, "Enter number (or 0 to cancel): ");
+
+    char    ans[8] = {0};
+    ssize_t nr     = read(fd_i, ans, sizeof(ans) - 1);
+    if (nr > 0) ans[nr] = '\0';
+
+    int choice = (nr > 0) ? atoi(ans) : 0;
+    if (choice < 1 || choice > n) {
+        for (int i = 0; i < n; i++) free(paths[i]);
+        cmd_write(fd_o, "Cancelled.\n");
+        return 0;
+    }
+
+    if (!ctx || !ctx->conv) {
+        for (int i = 0; i < n; i++) free(paths[i]);
+        cmd_write(fd_o, "error: no active conversation context\n");
+        return 1;
+    }
+
+    Conversation *loaded = history_load(ctx->conv->arena, paths[choice - 1]);
+    for (int i = 0; i < n; i++) free(paths[i]);
+
+    if (!loaded) {
+        cmd_write(fd_o, "error: failed to load conversation\n");
+        return 1;
+    }
+
+    /* Replace the turns array in the current conversation. */
+    ctx->conv->turns = loaded->turns;
+    ctx->conv->nturn = loaded->nturn;
+    ctx->conv->cap   = loaded->cap;
+
+    char line[CMD_BUF];
+    snprintf(line, sizeof(line), "Loaded %d turns.\n", loaded->nturn);
+    cmd_write(fd_o, line);
+    return 0;
+}
+
+static int cmd_search(int argc, const char **argv, CmdContext *ctx)
+{
+    int fd_o = ofd(ctx);
+    if (argc < 2) {
+        cmd_write(fd_o, "Usage: /search <term>\n");
+        return 1;
+    }
+    int found = history_search(argv[1], fd_o);
+    if (found == 0) {
+        cmd_write(fd_o, "No matches found.\n");
+    } else {
+        char line[CMD_BUF];
+        snprintf(line, sizeof(line), "%d match(es) found.\n", found);
+        cmd_write(fd_o, line);
+    }
+    return 0;
+}
+
+static int cmd_export(int argc, const char **argv, CmdContext *ctx)
+{
+    int fd_o = ofd(ctx);
+    if (!ctx || !ctx->conv) {
+        cmd_write(fd_o, "error: no active conversation\n");
+        return 1;
+    }
+
+    const char *path = (argc >= 2) ? argv[1] : NULL;
+
+    if (path) {
+        if (history_export(ctx->conv, path, -1) == 0) {
+            char line[CMD_BUF];
+            snprintf(line, sizeof(line), "Exported to %s\n", path);
+            cmd_write(fd_o, line);
+            return 0;
+        }
+        cmd_write(fd_o, "error: export failed\n");
+        return 1;
+    }
+
+    /* No path — write to fd_out. */
+    return history_export(ctx->conv, NULL, fd_o);
 }

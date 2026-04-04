@@ -65,7 +65,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_pet \
              tests/test_commands \
              tests/test_audit \
-             tests/test_pipe
+             tests/test_pipe \
+             tests/test_history
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -220,10 +221,15 @@ tests/test_pet: tests/test_pet.c src/tui/pet.c
 tests/test_oneshot: tests/test_oneshot.c src/core/oneshot.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
-# CMP-142: slash-command system
+# CMP-142: slash-command system (CMP-143: now includes history.c for /resume /search /export)
 tests/test_commands: tests/test_commands.c src/tui/commands.c \
                      src/agent/conversation.c src/tools/diff_sandbox.c \
-                     src/util/arena.c src/util/buf.c
+                     src/util/arena.c src/util/buf.c src/core/history.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-143: conversation history — save/resume/search/export
+tests/test_history: tests/test_history.c src/core/history.c \
+                    src/agent/conversation.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-210: structured audit log — JSONL tool call + sandbox denial logging

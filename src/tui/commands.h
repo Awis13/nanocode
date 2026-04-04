@@ -17,6 +17,9 @@
 #include "../agent/conversation.h"
 #include "../tools/diff_sandbox.h"
 
+/* Forward declaration — full type defined in history.h. */
+typedef struct HistoryCtx HistoryCtx;
+
 /*
  * Context passed to every command handler.
  * All pointer fields are optional — handlers NULL-check before use.
@@ -31,6 +34,7 @@ typedef struct {
     int            nmcp;        /* number of MCP servers */
     int            fd_out;      /* output fd (0 → STDOUT_FILENO) */
     int            fd_in;       /* input  fd (0 → STDIN_FILENO)  */
+    HistoryCtx    *history;     /* open history file; /resume loads, /export uses */
 } CmdContext;
 
 /*

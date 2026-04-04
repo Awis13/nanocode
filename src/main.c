@@ -38,7 +38,6 @@
 #include "../src/tui/commands.h"
 #include "../src/tui/input.h"
 #include "../src/tui/renderer.h"
-#include "repl_coordinator.h"
 #include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;
@@ -318,8 +317,6 @@ int main(int argc, char **argv)
                 return 1;
             }
             cli_search = argv[++i];
-        } else if (strcmp(argv[i], "--no-git") == 0) {
-            cli_no_git = 1;
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -635,23 +632,8 @@ int main(int argc, char **argv)
         rearm_anim_timer(g_loop, 0);
     }
 
-    /* -----------------------------------------------------------------------
-     * Phase 6: Wire interactive REPL (non-daemon, TTY sessions only).
-     * ---------------------------------------------------------------------- */
-    if (!cli_daemon && isatty(STDIN_FILENO)) {
-        ReplGlobals rg;
-        rg.renderer   = &g_renderer;
-        rg.repl_ctx   = &g_repl_ctx;
-        rg.sb_in_tok  = &g_sb_in_tok;
-        rg.sb_out_tok = &g_sb_out_tok;
-        rg.sb_turn    = &g_sb_turn;
-        repl_coordinator_setup(g_loop, &provider_cfg, &sc, arena, &rg);
-    }
-
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
-
-    repl_coordinator_teardown();
 
     if (g_statusbar) {
         statusbar_clear(g_statusbar);

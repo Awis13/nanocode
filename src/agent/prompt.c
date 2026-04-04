@@ -2,16 +2,22 @@
  * prompt.c — system prompt builder
  *
  * Sections assembled in order:
- *   1. Base identity
- *   2. Project detection
- *   3. CLAUDE.md / .nanocode.md injection
- *   4. Git status           \
- *   5. Environment bootstrap  > all skipped in ASan builds (popen/fork hazard)
- *                            /
- *   6. Available tools
- *   7. Working directory
  *
- * ASan guard rationale (PROMPT_NO_POPEN, defined below and in prompt.h):
+ * Static (cache-safe, rarely changes):
+ *   1. Base identity
+ *   2. Available tools
+ *   3. Sandbox policy block (if enabled)
+ *
+ * Dynamic (per-turn, rebuilt each call):
+ *   4. Project detection
+ *   5. CLAUDE.md / .nanocode.md injection
+ *   6. Git status           \
+ *   7. Environment bootstrap  > skipped in ASan builds (popen/fork hazard)
+ *                            /
+ *   8. Working directory
+ *   9. Budget hint (when budget_tokens > 0)
+ *
+ * ASan guard rationale (PROMPT_NO_POPEN, defined in prompt.h):
  *   popen() calls fork() internally.  On macOS, AddressSanitizer instruments
  *   fork() and the child process can deadlock holding ASan-internal locks.
  *   This is a known libclang_rt.asan + popen interaction on Darwin.
@@ -59,6 +65,19 @@ static char *read_file_heap(const char *path)
     return buf;
 }
 
+/* Copy a Buf into the arena; returns arena-allocated string or NULL. */
+static const char *buf_to_arena(Arena *arena, Buf *b)
+{
+    if (b->len == 0)
+        return arena_alloc(arena, 1); /* empty string "\0" */
+    char *out = arena_alloc(arena, b->len + 1);
+    if (!out)
+        return NULL;
+    const char *s = buf_str(b);
+    memcpy(out, s, b->len + 1);
+    return out;
+}
+
 /* -------------------------------------------------------------------------
  * popen helpers — compiled only when not in an ASan build.
  *
@@ -102,31 +121,80 @@ static void run_cmd_to_buf(Buf *b, const char *cmd)
 #endif /* !PROMPT_NO_POPEN */
 
 /* -------------------------------------------------------------------------
- * prompt_build
+ * prompt_build_parts
  * ---------------------------------------------------------------------- */
 
-char *prompt_build(Arena *arena, const char *cwd, void *exec,
-                   const SandboxConfig *sc)
+PromptParts prompt_build_parts(Arena *arena, const char *cwd, void *exec,
+                                const SandboxConfig *sc, size_t budget_tokens)
 {
     (void)exec; /* reserved — tools come from the global registry */
 
-    if (!arena || !cwd)
-        return NULL;
+    PromptParts result = { NULL, NULL };
 
-    Buf b;
-    buf_init(&b);
+    if (!arena || !cwd)
+        return result;
+
+    /* ==================================================================
+     * STATIC SECTION
+     * Rarely changes across turns — safe to cache at a prompt boundary.
+     * ================================================================== */
+    Buf bs;
+    buf_init(&bs);
 
     /* ------------------------------------------------------------------
      * 1. Base identity
      * ------------------------------------------------------------------ */
-    buf_append_str(&b,
+    buf_append_str(&bs,
         "You are nanocode, an AI coding agent. "
         "You help users read, write, and reason about code. "
         "You have access to tools for running shell commands, reading and "
         "writing files, and searching. Use them to complete tasks.\n\n");
 
     /* ------------------------------------------------------------------
-     * 2. Project detection
+     * 2. Available tools
+     * ------------------------------------------------------------------ */
+    {
+        const char *names[TOOL_REGISTRY_MAX];
+        int count = tool_list_names(names, TOOL_REGISTRY_MAX);
+        if (count > 0) {
+            buf_append_str(&bs, "## Available Tools\n");
+            for (int i = 0; i < count; i++) {
+                buf_append_str(&bs, "- ");
+                buf_append_str(&bs, names[i]);
+                buf_append_str(&bs, "\n");
+            }
+            buf_append_str(&bs, "\n");
+        }
+    }
+
+    /* ------------------------------------------------------------------
+     * 3. Sandbox policy block (only when sandbox is active)
+     * ------------------------------------------------------------------ */
+    if (sc && sc->enabled) {
+        char sbox[512];
+        sandbox_build_prompt_block(sc, sbox, sizeof(sbox));
+        if (sbox[0] != '\0') {
+            buf_append_str(&bs, "\n");
+            buf_append_str(&bs, sbox);
+            buf_append_str(&bs, "\n");
+        }
+    }
+
+    result.static_part = buf_to_arena(arena, &bs);
+    buf_destroy(&bs);
+
+    /* ==================================================================
+     * DYNAMIC SECTION
+     * Rebuilt each turn — contains project context, runtime state, and
+     * the optional per-turn budget hint.
+     * ================================================================== */
+    Buf bd;
+    buf_init(&bd);
+
+    size_t cwdlen = strlen(cwd);
+
+    /* ------------------------------------------------------------------
+     * 4. Project detection
      * ------------------------------------------------------------------ */
     static const struct { const char *file; const char *desc; } probes[] = {
         { "Makefile",       "C/C++ project (Makefile)" },
@@ -139,8 +207,6 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
         { NULL, NULL }
     };
 
-    size_t cwdlen = strlen(cwd);
-
     for (int i = 0; probes[i].file; i++) {
         size_t flen      = strlen(probes[i].file);
         char  *probe_path = malloc(cwdlen + 1 + flen + 1);
@@ -152,15 +218,15 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
         int found = file_exists(probe_path);
         free(probe_path);
         if (found) {
-            buf_append_str(&b, "## Project\nDetected: ");
-            buf_append_str(&b, probes[i].desc);
-            buf_append_str(&b, "\n\n");
+            buf_append_str(&bd, "## Project\nDetected: ");
+            buf_append_str(&bd, probes[i].desc);
+            buf_append_str(&bd, "\n\n");
             break;
         }
     }
 
     /* ------------------------------------------------------------------
-     * 3. CLAUDE.md / .nanocode.md injection
+     * 5. CLAUDE.md / .nanocode.md injection
      * ------------------------------------------------------------------ */
     static const char *const cfg_files[] = { "CLAUDE.md", ".nanocode.md", NULL };
 
@@ -175,18 +241,18 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
         char *content = read_file_heap(fpath);
         free(fpath);
         if (content) {
-            buf_append_str(&b, "## Project Instructions\n");
-            buf_append_str(&b, content);
+            buf_append_str(&bd, "## Project Instructions\n");
+            buf_append_str(&bd, content);
             free(content);
-            if (b.len > 0 && b.data[b.len - 1] != '\n')
-                buf_append_str(&b, "\n");
-            buf_append_str(&b, "\n");
+            if (bd.len > 0 && bd.data[bd.len - 1] != '\n')
+                buf_append_str(&bd, "\n");
+            buf_append_str(&bd, "\n");
             break;
         }
     }
 
     /* ------------------------------------------------------------------
-     * 4. Git status  +  5. Environment bootstrap
+     * 6. Git status  +  7. Environment bootstrap
      *
      * All popen() calls live inside this block.  See PROMPT_NO_POPEN.
      * ------------------------------------------------------------------ */
@@ -209,9 +275,9 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
                     free(cmd);
                 }
                 if (gs.len > 0) {
-                    buf_append_str(&b, "## Git Status\n```\n");
-                    buf_append(&b, gs.data, gs.len);
-                    buf_append_str(&b, "```\n\n");
+                    buf_append_str(&bd, "## Git Status\n```\n");
+                    buf_append(&bd, gs.data, gs.len);
+                    buf_append_str(&bd, "```\n\n");
                 }
                 buf_destroy(&gs);
             }
@@ -229,9 +295,9 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
                     free(cmd);
                 }
                 if (gl.len > 0) {
-                    buf_append_str(&b, "## Recent Commits\n```\n");
-                    buf_append(&b, gl.data, gl.len);
-                    buf_append_str(&b, "```\n\n");
+                    buf_append_str(&bd, "## Recent Commits\n```\n");
+                    buf_append(&bd, gl.data, gl.len);
+                    buf_append_str(&bd, "```\n\n");
                 }
                 buf_destroy(&gl);
             }
@@ -240,7 +306,7 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
         }
     }
 
-    /* -- 5. Environment bootstrap -- */
+    /* -- 7. Environment bootstrap -- */
     {
         static const char *const compilers[] = {
             "cc", "gcc", "clang", "rustc", "go", "node", "python3", NULL
@@ -263,9 +329,9 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
             buf_destroy(&tmp);
         }
         if (found.len > 0) {
-            buf_append_str(&b, "## Environment\nCompilers/runtimes: ");
-            buf_append(&b, found.data, found.len);
-            buf_append_str(&b, "\n");
+            buf_append_str(&bd, "## Environment\nCompilers/runtimes: ");
+            buf_append(&bd, found.data, found.len);
+            buf_append_str(&bd, "\n");
         }
         buf_destroy(&found);
 
@@ -283,18 +349,18 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
             buf_destroy(&tmp);
         }
         if (pkgs.len > 0) {
-            buf_append_str(&b, "Package managers: ");
-            buf_append(&b, pkgs.data, pkgs.len);
-            buf_append_str(&b, "\n");
+            buf_append_str(&bd, "Package managers: ");
+            buf_append(&bd, pkgs.data, pkgs.len);
+            buf_append_str(&bd, "\n");
         }
         buf_destroy(&pkgs);
 
         /* Shell */
         const char *shell = getenv("SHELL");
         if (shell && shell[0]) {
-            buf_append_str(&b, "Shell: ");
-            buf_append_str(&b, shell);
-            buf_append_str(&b, "\n");
+            buf_append_str(&bd, "Shell: ");
+            buf_append_str(&bd, shell);
+            buf_append_str(&bd, "\n");
         }
 
         /* Working-directory disk usage */
@@ -313,67 +379,69 @@ char *prompt_build(Arena *arena, const char *cwd, void *exec,
                            (du.data[du.len-1] == '\n' ||
                             du.data[du.len-1] == '\r'))
                         du.len--;
-                    buf_append_str(&b, "Working directory size: ");
-                    buf_append(&b, du.data, du.len);
-                    buf_append_str(&b, "\n");
+                    buf_append_str(&bd, "Working directory size: ");
+                    buf_append(&bd, du.data, du.len);
+                    buf_append_str(&bd, "\n");
                 }
                 buf_destroy(&du);
             }
         }
 
-        buf_append_str(&b, "\n");
+        buf_append_str(&bd, "\n");
     }
 #endif /* !PROMPT_NO_POPEN */
 
     /* ------------------------------------------------------------------
-     * 6. Available tools
+     * 8. Working directory
      * ------------------------------------------------------------------ */
-    {
-        const char *names[TOOL_REGISTRY_MAX];
-        int count = tool_list_names(names, TOOL_REGISTRY_MAX);
-        if (count > 0) {
-            buf_append_str(&b, "## Available Tools\n");
-            for (int i = 0; i < count; i++) {
-                buf_append_str(&b, "- ");
-                buf_append_str(&b, names[i]);
-                buf_append_str(&b, "\n");
-            }
-            buf_append_str(&b, "\n");
-        }
-    }
+    buf_append_str(&bd, "## Working Directory\n");
+    buf_append_str(&bd, cwd);
+    buf_append_str(&bd, "\n");
 
     /* ------------------------------------------------------------------
-     * 7. Working directory
+     * 9. Budget hint — injected only when budget_tokens > 0.
+     *
+     * A provider-agnostic plain-text note so the model can adapt its
+     * verbosity as the context window fills.  Placed last so it is
+     * always the freshest information in the dynamic section.
      * ------------------------------------------------------------------ */
-    buf_append_str(&b, "## Working Directory\n");
-    buf_append_str(&b, cwd);
-    buf_append_str(&b, "\n");
-
-    /* ------------------------------------------------------------------
-     * 8. Sandbox policy block (only when sandbox is active)
-     * ------------------------------------------------------------------ */
-    if (sc && sc->enabled) {
-        char sbox[512];
-        sandbox_build_prompt_block(sc, sbox, sizeof(sbox));
-        if (sbox[0] != '\0') {
-            buf_append_str(&b, "\n");
-            buf_append_str(&b, sbox);
-            buf_append_str(&b, "\n");
-        }
+    if (budget_tokens > 0) {
+        char hint[64];
+        snprintf(hint, sizeof(hint), "\nContext budget remaining: %zu tokens.\n",
+                 budget_tokens);
+        buf_append_str(&bd, hint);
     }
 
-    /* ------------------------------------------------------------------
-     * Copy result to arena
-     * ------------------------------------------------------------------ */
-    char *result = NULL;
-    if (b.len > 0) {
-        result = arena_alloc(arena, b.len + 1);
-        if (result) {
-            const char *s = buf_str(&b);
-            memcpy(result, s, b.len + 1);
-        }
-    }
+    result.dynamic_part = buf_to_arena(arena, &bd);
+    buf_destroy(&bd);
 
-    buf_destroy(&b);
+    return result;
+}
+
+/* -------------------------------------------------------------------------
+ * prompt_build — backward-compatible single-string variant
+ * ---------------------------------------------------------------------- */
+
+char *prompt_build(Arena *arena, const char *cwd, void *exec,
+                   const SandboxConfig *sc)
+{
+    PromptParts parts = prompt_build_parts(arena, cwd, exec, sc, 0);
+    if (!parts.static_part && !parts.dynamic_part)
+        return NULL;
+
+    const char *s = parts.static_part  ? parts.static_part  : "";
+    const char *d = parts.dynamic_part ? parts.dynamic_part : "";
+
+    size_t slen = strlen(s);
+    size_t dlen = strlen(d);
+    size_t total = slen + dlen;
+    if (total == 0)
+        return NULL;
+
+    char *result = arena_alloc(arena, total + 1);
+    if (!result)
+        return NULL;
+    memcpy(result, s, slen);
+    memcpy(result + slen, d, dlen + 1); /* include the NUL */
     return result;
 }

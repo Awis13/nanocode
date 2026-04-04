@@ -29,6 +29,19 @@ typedef struct {
     const char   *api_key;       /* may be NULL for local models */
     const char   *model;         /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
     int           thinking_budget; /* >0 enables extended thinking (Claude only) */
+    /*
+     * system_cache_static — static portion of the system prompt for Claude
+     * prompt caching.  When non-NULL, build_claude_body() emits the "system"
+     * field as an array of two blocks:
+     *   [{"type":"text","text":"<system_cache_static>",
+     *     "cache_control":{"type":"ephemeral"}},
+     *    {"type":"text","text":"<system message content>"}]
+     * The dynamic part (project context, CWD, budget hint) is the system
+     * message content passed in the Message array as role="system".
+     * Ignored for PROVIDER_OPENAI and PROVIDER_OLLAMA (no cache_control support).
+     * Set to NULL to use the simple string format (backward compatible).
+     */
+    const char   *system_cache_static;
 } ProviderConfig;
 
 /*

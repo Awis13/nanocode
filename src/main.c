@@ -29,10 +29,60 @@
 #include "../src/tools/bash.h"
 #include "../src/tools/executor.h"
 #include "../src/tools/fileops.h"
+#include "../include/pet.h"
+#include "../src/tui/repl_state.h"
+#include "../src/tui/spinner.h"
+#include "../src/tui/statusbar.h"
+#include "../src/agent/tool_protocol.h"
+#include "../src/tui/commands.h"
+#include "../src/tui/input.h"
+#include "../src/tui/renderer.h"
 #include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;
-static Loop *g_loop = NULL;
+static volatile sig_atomic_t g_winch   = 0;  /* set by SIGWINCH handler */
+static Loop      *g_loop       = NULL;
+static StatusBar *g_statusbar  = NULL;
+static Renderer  *g_renderer   = NULL;  /* set when renderer is created */
+static Pet        g_pet;
+static Spinner    g_spinner;
+static ReplCtx    g_repl_ctx;
+static int        g_sb_in_tok  = 0;
+static int        g_sb_out_tok = 0;
+static int        g_sb_turn    = 1;
+
+/* -------------------------------------------------------------------------
+ * Animation timer — fires at 16 ms (streaming) or 100 ms (idle).
+ * Ticks the spinner / pet and redraws the status bar.
+ * ---------------------------------------------------------------------- */
+
+static int anim_timer_cb(int timer_id, int events, void *ctx);
+
+static void rearm_anim_timer(Loop *l, int streaming)
+{
+    int ms = streaming ? 16 : 100;
+    loop_add_timer(l, ms, anim_timer_cb, l);
+}
+
+static int anim_timer_cb(int timer_id, int events, void *ctx)
+{
+    (void)timer_id; (void)events;
+    Loop *l = ctx;
+    /* Deferred SIGWINCH dispatch — re-query terminal width. */
+    if (g_winch) {
+        g_winch = 0;
+        if (g_renderer)
+            renderer_update_width(g_renderer);
+    }
+    repl_tick(&g_repl_ctx);
+    if (g_statusbar)
+        statusbar_update(g_statusbar, g_sb_in_tok, g_sb_out_tok, g_sb_turn);
+    ReplState st = repl_get_state(&g_repl_ctx);
+    int streaming = (st == REPL_STREAMING || st == REPL_THINKING ||
+                     st == REPL_TOOL_EXEC);
+    rearm_anim_timer(l, streaming);
+    return -1;
+}
 
 static void handle_signal(int sig)
 {
@@ -40,6 +90,12 @@ static void handle_signal(int sig)
     g_running = 0;
     if (g_loop)
         loop_stop(g_loop);
+}
+
+static void handle_sigwinch(int sig)
+{
+    (void)sig;
+    g_winch = 1;
 }
 
 static int session_timeout_cb(int timer_id, int events, void *ctx)
@@ -155,8 +211,9 @@ static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
 
 int main(int argc, char **argv)
 {
-    signal(SIGINT, handle_signal);
-    signal(SIGTERM, handle_signal);
+    signal(SIGINT,   handle_signal);
+    signal(SIGTERM,  handle_signal);
+    signal(SIGWINCH, handle_sigwinch);
 
     /* -----------------------------------------------------------------------
      * Phase 0: Handle `nanocode edit <path>:<line>` subcommand.
@@ -499,8 +556,35 @@ int main(int argc, char **argv)
         printf("nanocode daemon listening on %s\n", sock_path);
     }
 
+    /* -----------------------------------------------------------------------
+     * Phase 5: TUI status bar + pet animation (interactive sessions only).
+     * ---------------------------------------------------------------------- */
+    if (isatty(STDERR_FILENO)) {
+        const char *pet_cfg = config_get_str(cfg, "tui.pet");
+        PetKind pet_kind;
+        if (pet_cfg && pet_cfg[0])
+            pet_kind = pet_kind_from_str(pet_cfg);
+        else
+            pet_kind = pet_kind_random();
+        g_pet = pet_new(pet_kind);
+        g_statusbar = statusbar_new(STDERR_FILENO, &provider_cfg,
+                                    config_get_int(cfg, "session.max_turns"));
+        if (g_statusbar) {
+            statusbar_set_pet(g_statusbar, &g_pet);
+            statusbar_set_session_start(g_statusbar);
+        }
+        repl_ctx_init(&g_repl_ctx, g_loop, &g_pet, g_statusbar, &g_spinner);
+        rearm_anim_timer(g_loop, 0);
+    }
+
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
+
+    if (g_statusbar) {
+        statusbar_clear(g_statusbar);
+        statusbar_free(g_statusbar);
+        g_statusbar = NULL;
+    }
 
     if (cli_daemon) {
         daemon_stop(g_daemon);

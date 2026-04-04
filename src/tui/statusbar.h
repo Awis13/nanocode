@@ -1,10 +1,11 @@
 /*
  * statusbar.h — one-line status bar at the bottom of the terminal
  *
- * Displays model name, token counts, estimated cost, and turn counter.
+ * Displays model name, token counts, estimated cost, turn counter,
+ * time-to-first-token latency, and session elapsed time.
  * Example output (right-aligned, dimmed):
  *
- *   [claude-opus-4-6]  in: 12,450  out: 892  ~$0.08  turn 7/∞
+ *   [claude-opus-4-6]  in: 12,450  out: 892  ~$0.08  turn 7/∞  342ms  3m12s
  *
  * Uses ANSI save-cursor / move-to-last-row / restore to update without
  * scrolling. All output is emitted in a single write(2) per update to
@@ -34,7 +35,7 @@ StatusBar *statusbar_new(int fd, const ProviderConfig *cfg, int max_turns);
  * `out_tok` — cumulative output tokens for the session.
  * `turn`    — current turn number (1-based).
  *
- * Call after each token batch, not per-token.
+ * Call after each token batch, not per-token, or at ~60fps during streaming.
  */
 void statusbar_update(StatusBar *sb, int in_tok, int out_tok, int turn);
 
@@ -56,6 +57,29 @@ void statusbar_clear(StatusBar *sb);
  * Pass NULL to detach the pet and stop rendering it.
  */
 void statusbar_set_pet(StatusBar *sb, Pet *pet);
+
+/*
+ * Record the session start time.  Call once at session init.
+ * Used to compute the elapsed-time field shown in the status bar.
+ * If not called, elapsed time is omitted from the status line.
+ */
+void statusbar_set_session_start(StatusBar *sb);
+
+/*
+ * Record that the first streaming token of the current turn has arrived.
+ * Computes time-to-first-token (latency) relative to the last call to
+ * statusbar_mark_turn_start().
+ * Call on the first token_cb invocation per turn.
+ */
+void statusbar_mark_first_token(StatusBar *sb);
+
+/*
+ * Record that a new turn is starting (user submitted prompt → API call).
+ * Resets the latency clock so the next statusbar_mark_first_token() computes
+ * time-to-first-token correctly.
+ * Call when the API request is dispatched.
+ */
+void statusbar_mark_turn_start(StatusBar *sb);
 
 /*
  * Free the StatusBar struct. Does not close `fd`.

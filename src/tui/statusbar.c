@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 
 /* -------------------------------------------------------------------------
@@ -28,6 +29,17 @@ static const CostEntry COST_TABLE[] = {
 };
 
 /* -------------------------------------------------------------------------
+ * Monotonic clock helper
+ * ---------------------------------------------------------------------- */
+
+static long long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+/* -------------------------------------------------------------------------
  * Struct
  * ---------------------------------------------------------------------- */
 
@@ -35,9 +47,15 @@ struct StatusBar {
     int    fd;
     int    max_turns;
     char   model[64];
-    double input_rate;   /* USD per MTok */
-    double output_rate;  /* USD per MTok */
-    Pet   *pet;          /* optional pet — NULL if none */
+    double input_rate;        /* USD per MTok */
+    double output_rate;       /* USD per MTok */
+    Pet   *pet;               /* optional pet — NULL if none */
+
+    /* Timing — set via statusbar_set_session_start / statusbar_mark_* */
+    long long session_start_ms;  /* monotonic ms, 0 = not set */
+    long long turn_start_ms;     /* set by statusbar_mark_turn_start() */
+    long long latency_ms;        /* time-to-first-token; 0 = not measured yet */
+    int       latency_valid;     /* 1 once first token seen this turn */
 };
 
 /* -------------------------------------------------------------------------
@@ -188,6 +206,25 @@ static void fmt_thousands(long long n, char *buf, int cap)
 }
 
 /*
+ * Format elapsed session time into `buf` (e.g. "3m12s", "42s", "1h02m").
+ * Returns bytes written (no NUL); writes empty string if elapsed <= 0.
+ */
+static int fmt_elapsed(long long elapsed_ms, char *buf, int cap)
+{
+    if (elapsed_ms <= 0 || cap <= 0) {
+        if (cap > 0) buf[0] = '\0';
+        return 0;
+    }
+    long long s = elapsed_ms / 1000LL;
+    if (s < 60)
+        return snprintf(buf, (size_t)cap, "%llds", s);
+    if (s < 3600)
+        return snprintf(buf, (size_t)cap, "%lldm%02llds", s / 60, s % 60);
+    return snprintf(buf, (size_t)cap,
+                    "%lldh%02lldm", s / 3600, (s % 3600) / 60);
+}
+
+/*
  * Build the visible status line (no ANSI) into `buf`.
  * Returns number of bytes written (not including NUL).
  * Exposed via statusbar_format_line for unit tests.
@@ -212,9 +249,37 @@ int statusbar_format_line(const StatusBar *sb, int in_tok, int out_tok,
         /* UTF-8 ∞ (U+221E) = 0xE2 0x88 0x9E */
         snprintf(turn_str, sizeof(turn_str), "%d/\xe2\x88\x9e", turn);
 
-    return snprintf(buf, (size_t)cap,
-                    "[%s]  in: %s  out: %s  ~$%.2f  turn %s",
-                    sb->model, in_str, out_str, cost, turn_str);
+    int n = snprintf(buf, (size_t)cap,
+                     "[%s]  in: %s  out: %s  ~$%.2f  turn %s",
+                     sb->model, in_str, out_str, cost, turn_str);
+
+    /* Append latency (time-to-first-token) if measured. */
+    if (sb->latency_valid && n > 0 && n < cap - 1) {
+        int r;
+        if (sb->latency_ms < 1000)
+            r = snprintf(buf + n, (size_t)(cap - n),
+                         "  %lldms", sb->latency_ms);
+        else
+            r = snprintf(buf + n, (size_t)(cap - n),
+                         "  %.1fs", (double)sb->latency_ms / 1000.0);
+        if (r > 0) n += r;
+    }
+
+    /* Append session elapsed time if session_start was set. */
+    if (sb->session_start_ms > 0 && n > 0 && n < cap - 1) {
+        long long elapsed = now_ms() - sb->session_start_ms;
+        char elapsed_str[32];
+        int  r = fmt_elapsed(elapsed, elapsed_str, (int)sizeof(elapsed_str));
+        if (r > 0 && n + r + 2 < cap) {
+            buf[n++] = ' ';
+            buf[n++] = ' ';
+            memcpy(buf + n, elapsed_str, (size_t)r);
+            n += r;
+            buf[n] = '\0';
+        }
+    }
+
+    return n;
 }
 
 /*
@@ -277,6 +342,30 @@ void statusbar_set_pet(StatusBar *sb, Pet *pet)
 {
     if (!sb) return;
     sb->pet = pet;
+}
+
+void statusbar_set_session_start(StatusBar *sb)
+{
+    if (!sb) return;
+    sb->session_start_ms = now_ms();
+}
+
+void statusbar_mark_turn_start(StatusBar *sb)
+{
+    if (!sb) return;
+    sb->turn_start_ms   = now_ms();
+    sb->latency_valid   = 0;
+    sb->latency_ms      = 0;
+}
+
+void statusbar_mark_first_token(StatusBar *sb)
+{
+    if (!sb || sb->latency_valid) return;
+    if (sb->turn_start_ms > 0) {
+        sb->latency_ms = now_ms() - sb->turn_start_ms;
+        if (sb->latency_ms < 0) sb->latency_ms = 0;
+    }
+    sb->latency_valid = 1;
 }
 
 void statusbar_update(StatusBar *sb, int in_tok, int out_tok, int turn)

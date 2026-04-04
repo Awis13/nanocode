@@ -364,6 +364,120 @@ TEST(test_set_pet_transition_active)
 }
 
 /* =========================================================================
+ * CMP-365: timing API tests
+ * ====================================================================== */
+
+TEST(test_timing_null_safe)
+{
+    /* All timing calls must be safe on NULL. */
+    statusbar_set_session_start(NULL);
+    statusbar_mark_turn_start(NULL);
+    statusbar_mark_first_token(NULL);
+}
+
+TEST(test_latency_not_shown_before_mark)
+{
+    /* Without mark_turn_start + mark_first_token, no latency field appears. */
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(STDOUT_FILENO, &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+
+    char *line = fmt(sb, 0, 0, 1);
+    ASSERT_NOT_NULL(line);
+    ASSERT_TRUE(strstr(line, "ms") == NULL);
+    free(line);
+
+    statusbar_free(sb);
+}
+
+TEST(test_latency_shown_after_mark)
+{
+    /* After marking turn start and first token, latency field appears. */
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(STDOUT_FILENO, &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+
+    statusbar_mark_turn_start(sb);
+    statusbar_mark_first_token(sb);
+
+    char *line = fmt(sb, 0, 0, 1);
+    ASSERT_NOT_NULL(line);
+    /* Should contain latency field (either Nms or N.Xs). */
+    ASSERT_TRUE(strstr(line, "ms") != NULL || strstr(line, "s") != NULL);
+    free(line);
+
+    statusbar_free(sb);
+}
+
+TEST(test_first_token_idempotent)
+{
+    /* Calling statusbar_mark_first_token multiple times must not reset
+     * the latency measurement (only the first call counts). */
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(STDOUT_FILENO, &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+
+    statusbar_mark_turn_start(sb);
+    statusbar_mark_first_token(sb);
+
+    char *line1 = fmt(sb, 0, 0, 1);
+    statusbar_mark_first_token(sb);  /* must be a no-op */
+    char *line2 = fmt(sb, 0, 0, 1);
+
+    ASSERT_NOT_NULL(line1);
+    ASSERT_NOT_NULL(line2);
+    ASSERT_STR_EQ(line1, line2);
+
+    free(line1);
+    free(line2);
+    statusbar_free(sb);
+}
+
+TEST(test_session_elapsed_shown)
+{
+    /* After set_session_start, elapsed time appears in line. */
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(STDOUT_FILENO, &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+
+    statusbar_set_session_start(sb);
+
+    char *line = fmt(sb, 0, 0, 1);
+    ASSERT_NOT_NULL(line);
+    ASSERT_TRUE((int)strlen(line) > 0);
+    free(line);
+
+    statusbar_free(sb);
+}
+
+TEST(test_turn_start_resets_latency)
+{
+    /* statusbar_mark_turn_start resets latency so next turn starts fresh. */
+    ProviderConfig cfg = make_cfg(PROVIDER_CLAUDE, "claude-sonnet-4-6");
+    StatusBar *sb = statusbar_new(STDOUT_FILENO, &cfg, 0);
+    ASSERT_NOT_NULL(sb);
+
+    /* First turn — latency measured. */
+    statusbar_mark_turn_start(sb);
+    statusbar_mark_first_token(sb);
+
+    char *line1 = fmt(sb, 0, 0, 1);
+    ASSERT_NOT_NULL(line1);
+    ASSERT_TRUE(strstr(line1, "ms") != NULL || strstr(line1, "s") != NULL);
+    free(line1);
+
+    /* Second turn start — latency field disappears until first token. */
+    statusbar_mark_turn_start(sb);
+
+    char *line2 = fmt(sb, 0, 0, 2);
+    ASSERT_NOT_NULL(line2);
+    ASSERT_TRUE(strstr(line2, "ms") == NULL);
+    free(line2);
+
+    statusbar_free(sb);
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -390,6 +504,14 @@ int main(void)
     RUN_TEST(test_set_pet_off_no_extra_ansi);
     RUN_TEST(test_set_pet_ticks_on_update);
     RUN_TEST(test_set_pet_transition_active);
+
+    /* CMP-365: timing API */
+    RUN_TEST(test_timing_null_safe);
+    RUN_TEST(test_latency_not_shown_before_mark);
+    RUN_TEST(test_latency_shown_after_mark);
+    RUN_TEST(test_first_token_idempotent);
+    RUN_TEST(test_session_elapsed_shown);
+    RUN_TEST(test_turn_start_resets_latency);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

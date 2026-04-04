@@ -23,12 +23,6 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 
-/* Forward declaration avoids pulling in diff_sandbox.h transitive deps. */
-void diff_sandbox_show_one(const char *path,
-                           const char *old_content,
-                           const char *new_content,
-                           Arena *arena);
-
 /* Diff truncation thresholds. */
 #define TRUNCATE_TOTAL  100
 #define TRUNCATE_HEAD    50
@@ -40,8 +34,9 @@ void diff_sandbox_show_one(const char *path,
 /* -------------------------------------------------------------------------
  * capture_diff -- render unified diff into a heap-allocated string
  *
- * Uses pipe + dup2 to intercept diff_sandbox_show_one()'s stdout output,
- * then restores stdout. Returns malloc'd NUL-terminated string; caller frees.
+ * Passes the pipe write-end directly to diff_sandbox_show_one() via its fd
+ * parameter — no stdout redirection or dup2 needed.
+ * Returns malloc'd NUL-terminated string; caller frees.
  * Returns NULL on allocation / pipe failure.
  * ---------------------------------------------------------------------- */
 
@@ -52,23 +47,12 @@ static char *capture_diff(const char *path,
     int pfd[2];
     if (pipe(pfd) < 0) return NULL;
 
-    int saved_stdout = dup(STDOUT_FILENO);
-    if (saved_stdout < 0) { close(pfd[0]); close(pfd[1]); return NULL; }
-
-    if (dup2(pfd[1], STDOUT_FILENO) < 0) {
-        close(pfd[0]); close(pfd[1]); close(saved_stdout); return NULL;
-    }
-    close(pfd[1]);
-
     Arena *arena = arena_new(DIFF_ARENA_SIZE);
     if (arena) {
-        diff_sandbox_show_one(path, old_content, new_content, arena);
+        diff_sandbox_show_one(path, old_content, new_content, pfd[1], arena);
         arena_free(arena);
     }
-    fflush(stdout);
-
-    dup2(saved_stdout, STDOUT_FILENO);
-    close(saved_stdout);
+    close(pfd[1]);
 
     size_t cap  = 4096;
     size_t used = 0;
@@ -203,14 +187,23 @@ static char *open_in_editor(const char *content)
     const char *editor = getenv("EDITOR");
     if (!editor || !*editor) editor = "vi";
 
-    size_t cmd_len = strlen(editor) + 1 + strlen(tmp_path) + 1;
-    char  *cmd     = malloc(cmd_len);
-    if (!cmd) { unlink(tmp_path); return NULL; }
-    snprintf(cmd, cmd_len, "%s %s", editor, tmp_path);
+    pid_t pid = fork();
+    if (pid < 0) { unlink(tmp_path); return NULL; }
 
-    int ret = system(cmd);
-    free(cmd);
-    if (ret != 0) { unlink(tmp_path); return NULL; }
+    if (pid == 0) {
+        /* Child: exec the editor directly — no shell interpretation. */
+        char *const argv[] = { (char *)editor, (char *)tmp_path, NULL };
+        execvp(editor, argv);
+        _exit(127); /* execvp failed */
+    }
+
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        ;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        unlink(tmp_path);
+        return NULL;
+    }
 
     FILE *f = fopen(tmp_path, "rb");
     if (!f) { unlink(tmp_path); return NULL; }
@@ -236,13 +229,15 @@ static char *open_in_editor(const char *content)
 int diff_confirm_cb(const char *path,
                     const char *old_content,
                     const char *new_content,
+                    char **out_replacement,
                     void *ctx)
 {
     DiffConfirmCtx *dcc = (DiffConfirmCtx *)ctx;
     int fd_out = dcc ? dcc->fd_out : STDOUT_FILENO;
     int fd_in  = dcc ? dcc->fd_in  : STDIN_FILENO;
 
-    if (dcc && dcc->auto_apply) return -1;  /* apply-all */
+    /* apply-all: auto_apply set by a previous 'a' keypress; no global mutation. */
+    if (dcc && dcc->auto_apply) return 1;
 
     char *diff = capture_diff(path, old_content, new_content);
     if (!diff) {
@@ -271,24 +266,42 @@ int diff_confirm_cb(const char *path,
         switch (key) {
         case 'y': case 'Y': return 1;
         case 'n': case 'N': return 0;
-        case 'a': case 'A': return -1;
+        case 'a': case 'A':
+            /* Use context state rather than nulling the global callback. */
+            if (dcc) dcc->auto_apply = 1;
+            return 1;
         case 'e': case 'E': {
             char *edited = open_in_editor(new_content);
-            if (edited) {
-                dprintf(fd_out,
-                        "\x1b[33mNote:\x1b[0m editor opened; "
-                        "the agent's original content will be written.\n"
-                        "Apply the agent's original change?\n"
-                        "[\x1b[32my\x1b[0m]es / "
-                        "[\x1b[31mn\x1b[0m]o: ");
-                free(edited);
-                for (;;) {
-                    char k2 = read_key(fd_in);
-                    char e2[3] = { k2, '\n', '\0' };
-                    (void)write(fd_out, e2, 2);
-                    if (k2 == 'y' || k2 == 'Y') return 1;
-                    if (k2 == 'n' || k2 == 'N') return 0;
+            if (!edited) {
+                /* Editor failed or was cancelled; re-prompt. */
+                (void)write(fd_out, prompt, strlen(prompt));
+                break;
+            }
+            /* Show diff of the user's edited version vs the original. */
+            char *edit_diff = capture_diff(path, old_content, edited);
+            if (edit_diff) {
+                int truncated = 0;
+                edit_diff = maybe_truncate(edit_diff, &truncated);
+                (void)write(fd_out, edit_diff, strlen(edit_diff));
+                (void)truncated;
+                free(edit_diff);
+            }
+            const char *eprompt =
+                "\x1b[1mApply your edited version?\x1b[0m "
+                "[\x1b[32my\x1b[0m]es / "
+                "[\x1b[31mn\x1b[0m]o: ";
+            (void)write(fd_out, eprompt, strlen(eprompt));
+            for (;;) {
+                char k2 = read_key(fd_in);
+                char e2[3] = { k2, '\n', '\0' };
+                (void)write(fd_out, e2, 2);
+                if (k2 == 'y' || k2 == 'Y') {
+                    /* Pass edited content back; fileops will apply it. */
+                    if (out_replacement) *out_replacement = edited;
+                    else                 free(edited);
+                    return 1;
                 }
+                if (k2 == 'n' || k2 == 'N') { free(edited); break; }
             }
             (void)write(fd_out, prompt, strlen(prompt));
             break;

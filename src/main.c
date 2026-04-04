@@ -48,7 +48,6 @@
 #include "../src/tui/diff_confirm.h"
 #include "../src/tui/input.h"
 #include "../src/tui/renderer.h"
-#include "../src/util/buf.h"
 #include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;

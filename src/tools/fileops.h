@@ -16,18 +16,22 @@ void fileops_register_all(void);
 /*
  * Confirmation callback — called before each write_file or edit_file
  * operation with the affected path, the existing content (NULL for new
- * files), and the proposed new content.
+ * files), the proposed new content, and an out-parameter for replacement.
  *
  * Return values:
- *   > 0  apply this change and keep the callback active for future writes
+ *   > 0  apply this change (using *out_replacement if the callback set it)
  *     0  reject this change (tool returns an error to the model)
  *   < 0  apply this change AND disable the callback (apply-all from here)
  *
- * The callback must not modify the string arguments.
+ * out_replacement — if the callback sets *out_replacement to a non-NULL
+ *                   heap-allocated string, fileops writes that instead of
+ *                   new_content and then free()s it.
+ * The callback must not modify the other string arguments.
  */
 typedef int (*fileops_confirm_cb)(const char *path,
                                   const char *old_content,
                                   const char *new_content,
+                                  char **out_replacement,
                                   void *ctx);
 
 /*
@@ -59,24 +63,6 @@ void fileops_set_audit(AuditLog *log, const char *session_id,
  * Useful for clean-shutdown summaries.
  */
 int fileops_get_files_created(void);
-
-/*
- * Optional confirmation callback for write_file and edit_file.
- * Called before each file is written.  Return values:
- *   > 0  — apply this change
- *     0  — reject this change (tool returns an error to the agent)
- *   < 0  — apply this change and disable the callback for the rest of the session
- *
- * path        — the file being written
- * old_content — current file content (NULL if file is new)
- * new_content — proposed new content
- * ctx         — opaque pointer passed to fileops_set_confirm_cb
- */
-typedef int (*fileops_confirm_cb)(const char *path,
-                                  const char *old_content,
-                                  const char *new_content,
-                                  void *ctx);
-void fileops_set_confirm_cb(fileops_confirm_cb cb, void *ctx);
 
 /*
  * Individual tool handlers — exported so tests can invoke them directly

@@ -460,6 +460,140 @@ TEST(test_register_all_no_crash)
 }
 
 /* -------------------------------------------------------------------------
+ * fileops_set_confirm_cb — integration tests
+ * ---------------------------------------------------------------------- */
+
+/* Callback that always rejects (returns 0). */
+static int cb_reject(const char *path, const char *old_content,
+                     const char *new_content, char **out_replacement,
+                     void *ctx)
+{
+    (void)path; (void)old_content; (void)new_content;
+    (void)out_replacement; (void)ctx;
+    return 0;
+}
+
+/* Callback that always approves (returns 1). */
+static int cb_approve(const char *path, const char *old_content,
+                      const char *new_content, char **out_replacement,
+                      void *ctx)
+{
+    (void)path; (void)old_content; (void)new_content;
+    (void)out_replacement; (void)ctx;
+    return 1;
+}
+
+/* Callback that disables itself (returns < 0). */
+static int cb_disable(const char *path, const char *old_content,
+                      const char *new_content, char **out_replacement,
+                      void *ctx)
+{
+    (void)path; (void)old_content; (void)new_content;
+    (void)out_replacement; (void)ctx;
+    return -1;
+}
+
+/* Callback that replaces content with a fixed string. */
+static int cb_replace(const char *path, const char *old_content,
+                      const char *new_content, char **out_replacement,
+                      void *ctx)
+{
+    (void)path; (void)old_content; (void)new_content; (void)ctx;
+    if (out_replacement) *out_replacement = strdup("replaced_by_callback\n");
+    return 1;
+}
+
+/* cb=reject: write_file returns error, file not written. */
+TEST(test_confirm_cb_reject_write)
+{
+    fileops_set_limits(0, 0);
+    fileops_set_confirm_cb(cb_reject, NULL);
+
+    Arena *a = arena_new(65536);
+    const char *path = TMP_PREFIX "confirm_reject";
+    char args[512];
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"hello\"}", path);
+    ToolResult r = fileops_write(a, args);
+    ASSERT_EQ(r.error, 1); /* rejected → error */
+    ASSERT_EQ(access(path, F_OK), -1); /* file must not exist */
+
+    fileops_set_confirm_cb(NULL, NULL);
+    arena_free(a);
+}
+
+/* cb=approve: write_file succeeds and writes content. */
+TEST(test_confirm_cb_approve_write)
+{
+    fileops_set_limits(0, 0);
+    fileops_set_confirm_cb(cb_approve, NULL);
+
+    Arena *a = arena_new(65536);
+    const char *path = TMP_PREFIX "confirm_approve";
+    char args[512];
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"approved\"}", path);
+    ToolResult r = fileops_write(a, args);
+    ASSERT_EQ(r.error, 0);
+    ASSERT_STR_EQ(read_tmp(path), "approved");
+
+    fileops_set_confirm_cb(NULL, NULL);
+    unlink(path);
+    arena_free(a);
+}
+
+/* cb=disable: first write applies; subsequent writes skip the callback. */
+TEST(test_confirm_cb_disable_on_negative)
+{
+    fileops_set_limits(0, 0);
+    fileops_set_confirm_cb(cb_disable, NULL);
+
+    Arena *a = arena_new(65536);
+    const char *p1 = TMP_PREFIX "confirm_dis1";
+    const char *p2 = TMP_PREFIX "confirm_dis2";
+    char args[512];
+
+    /* First write: callback returns < 0 → apply + disable. */
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"first\"}", p1);
+    ToolResult r1 = fileops_write(a, args);
+    ASSERT_EQ(r1.error, 0);
+    ASSERT_STR_EQ(read_tmp(p1), "first");
+
+    /* Second write: callback is disabled → write proceeds without prompting. */
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"second\"}", p2);
+    ToolResult r2 = fileops_write(a, args);
+    ASSERT_EQ(r2.error, 0);
+    ASSERT_STR_EQ(read_tmp(p2), "second");
+
+    fileops_set_confirm_cb(NULL, NULL);
+    unlink(p1);
+    unlink(p2);
+    arena_free(a);
+}
+
+/* cb that sets out_replacement: fileops writes replacement content. */
+TEST(test_confirm_cb_replacement_write)
+{
+    fileops_set_limits(0, 0);
+    fileops_set_confirm_cb(cb_replace, NULL);
+
+    Arena *a = arena_new(65536);
+    const char *path = TMP_PREFIX "confirm_replace";
+    char args[512];
+    snprintf(args, sizeof(args),
+             "{\"path\":\"%s\",\"content\":\"original\"}", path);
+    ToolResult r = fileops_write(a, args);
+    ASSERT_EQ(r.error, 0);
+    ASSERT_STR_EQ(read_tmp(path), "replaced_by_callback\n");
+
+    fileops_set_confirm_cb(NULL, NULL);
+    unlink(path);
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
 
@@ -491,6 +625,11 @@ int main(void)
     RUN_TEST(test_edit_no_new_file_count);
 
     RUN_TEST(test_register_all_no_crash);
+
+    RUN_TEST(test_confirm_cb_reject_write);
+    RUN_TEST(test_confirm_cb_approve_write);
+    RUN_TEST(test_confirm_cb_disable_on_negative);
+    RUN_TEST(test_confirm_cb_replacement_write);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

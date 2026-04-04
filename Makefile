@@ -154,7 +154,7 @@ tests/test_mcp: tests/test_mcp.c src/agent/mcp.c src/tools/executor.c \
 
 # CMP-124: tool output display — invocation header, result truncation, diff colouring
 tests/test_tool_display: tests/test_tool_display.c src/tui/tool_display.c \
-                         src/tools/executor.c src/util/arena.c \
+                         src/tui/spinner.c src/tools/executor.c src/util/arena.c \
                          src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 

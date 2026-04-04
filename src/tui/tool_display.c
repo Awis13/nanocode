@@ -3,10 +3,11 @@
  */
 
 #include "tool_display.h"
+#include "spinner.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 /* -------------------------------------------------------------------------
@@ -54,12 +55,15 @@ static void write_indented_line(int fd, const char *line, size_t len)
     }
 }
 
-/* Return current time as milliseconds (CLOCK_MONOTONIC). */
-static long now_ms(void)
+/* Detect whether the terminal supports 256 colours. */
+static int detect_256color(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+    const char *term  = getenv("TERM");
+    const char *cterm = getenv("COLORTERM");
+    if (term  && strstr(term,  "256color"))    return 1;
+    if (cterm && (strcmp(cterm,"truecolor")==0 ||
+                  strcmp(cterm,"24bit")==0))    return 1;
+    return 0;
 }
 
 /* -------------------------------------------------------------------------
@@ -224,53 +228,24 @@ void tool_display_error(int fd, const char *msg)
 }
 
 /* -------------------------------------------------------------------------
- * Progress spinner
+ * Progress spinner — braille glyph via Spinner API
  * ---------------------------------------------------------------------- */
-
-static const char SPINNER_FRAMES[] = { '-', '\\', '|', '/' };
 
 void tool_progress_start(ToolProgress *p, int fd)
 {
-    p->fd       = fd;
-    p->frame    = 0;
-    p->shown    = 0;
-    p->start_ms = now_ms();
+    spinner_start(&p->sp, fd, detect_256color());
 }
 
 void tool_progress_tick(ToolProgress *p)
 {
     if (!p)
         return;
-
-    long elapsed = now_ms() - p->start_ms;
-    if (elapsed < 500)
-        return;
-
-    char buf[8];
-    int  n;
-
-    if (p->shown) {
-        /* Overwrite the previous glyph with carriage-return. */
-        n = snprintf(buf, sizeof(buf), "\r%c", SPINNER_FRAMES[p->frame]);
-    } else {
-        n = snprintf(buf, sizeof(buf), "%c", SPINNER_FRAMES[p->frame]);
-        p->shown = 1;
-    }
-
-    p->frame = (p->frame + 1) & 3;
-
-    if (n > 0)
-        fd_write(p->fd, buf, (size_t)n);
+    spinner_tick(&p->sp);
 }
 
 void tool_progress_stop(ToolProgress *p)
 {
     if (!p)
         return;
-
-    if (p->shown) {
-        /* Erase the spinner glyph. */
-        fd_puts(p->fd, "\r \r");
-        p->shown = 0;
-    }
+    spinner_stop(&p->sp);
 }

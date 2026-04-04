@@ -11,6 +11,7 @@
 #define TOOL_DISPLAY_H
 
 #include "../tools/executor.h"
+#include "spinner.h"
 
 /* Lines of output shown before the "[N more lines]" footer. */
 #define TOOL_DISPLAY_MAX_LINES 5
@@ -60,15 +61,11 @@ void tool_display_diff(int fd, const char *diff_text);
 void tool_display_error(int fd, const char *msg);
 
 /*
- * Progress spinner — tracks elapsed time and shows a spinning cursor
- * once more than 500 ms have passed since tool_progress_start().
- * All state is stored inline; no heap allocation required.
+ * Progress spinner — braille breathing spinner shown while a tool runs.
+ * Wraps Spinner; all state is stored inline with no heap allocation.
  */
 typedef struct {
-    int    fd;
-    int    frame;   /* 0-3, cycles through spinner chars */
-    int    shown;   /* 1 while the spinner glyph is on-screen */
-    long   start_ms; /* monotonic ms at start */
+    Spinner sp;   /* braille spinner — delegates to spinner_*() */
 } ToolProgress;
 
 /* Initialise *p and record the start time. Does not write to fd yet. */

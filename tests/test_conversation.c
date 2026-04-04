@@ -417,6 +417,110 @@ TEST(test_conv_load_nonexistent)
 }
 
 /* -------------------------------------------------------------------------
+ * Version field (CMP-165)
+ * ---------------------------------------------------------------------- */
+
+/* conv_save must write "version":1 as the first field. */
+TEST(test_version_field_in_saved_file)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+    conv_add(conv, "user", "version test");
+
+    const char *path = "/tmp/test_conv_version.json";
+    int rc = conv_save(conv, path);
+    ASSERT_EQ(rc, 0);
+
+    FILE *fp = fopen(path, "r");
+    ASSERT_NOT_NULL(fp);
+    char raw[256] = {0};
+    size_t nr = fread(raw, 1, sizeof(raw) - 1, fp);
+    fclose(fp);
+    ASSERT_TRUE(nr > 0);
+    ASSERT_NOT_NULL(strstr(raw, "\"version\":1"));
+
+    arena_free(a);
+}
+
+/* Roundtrip still works after adding version field. */
+TEST(test_roundtrip_with_version)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+    conv_add(conv, "user",      "version roundtrip");
+    conv_add(conv, "assistant", "ok");
+
+    const char *path = "/tmp/test_conv_version_rt.json";
+    int rc = conv_save(conv, path);
+    ASSERT_EQ(rc, 0);
+
+    Arena *b = arena_new(1 << 20);
+    ASSERT_NOT_NULL(b);
+
+    Conversation *loaded = conv_load(b, path);
+    ASSERT_NOT_NULL(loaded);
+    ASSERT_EQ(loaded->nturn, 2);
+    ASSERT_STR_EQ(loaded->turns[0].content, "version roundtrip");
+    ASSERT_STR_EQ(loaded->turns[1].content, "ok");
+
+    arena_free(a);
+    arena_free(b);
+}
+
+/* Legacy files without version field must load gracefully. */
+TEST(test_legacy_load_no_version_field)
+{
+    const char *path = "/tmp/test_conv_legacy.json";
+    const char *legacy = "{\"conv_id\":\"legacy-id\","
+                         "\"turns\":[{\"role\":\"user\","
+                         "\"content\":\"legacy msg\",\"is_tool\":0}]}";
+
+    FILE *fp = fopen(path, "w");
+    ASSERT_NOT_NULL(fp);
+    fputs(legacy, fp);
+    fclose(fp);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_load(a, path);
+    ASSERT_NOT_NULL(conv);
+    ASSERT_EQ(conv->nturn, 1);
+    ASSERT_STR_EQ(conv->turns[0].role,    "user");
+    ASSERT_STR_EQ(conv->turns[0].content, "legacy msg");
+    ASSERT_STR_EQ(conv->conv_id,          "legacy-id");
+
+    arena_free(a);
+}
+
+/* Files with an unsupported version must be rejected. */
+TEST(test_unsupported_version_rejected)
+{
+    const char *path = "/tmp/test_conv_future.json";
+    const char *future = "{\"version\":99,\"conv_id\":\"x\","
+                         "\"turns\":[]}";
+
+    FILE *fp = fopen(path, "w");
+    ASSERT_NOT_NULL(fp);
+    fputs(future, fp);
+    fclose(fp);
+
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_load(a, path);
+    ASSERT_NULL(conv);
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
 
@@ -447,6 +551,11 @@ int main(void)
     RUN_TEST(test_roundtrip_tool_flags);
     RUN_TEST(test_roundtrip_special_chars);
     RUN_TEST(test_conv_load_nonexistent);
+
+    RUN_TEST(test_version_field_in_saved_file);
+    RUN_TEST(test_roundtrip_with_version);
+    RUN_TEST(test_legacy_load_no_version_field);
+    RUN_TEST(test_unsupported_version_rejected);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

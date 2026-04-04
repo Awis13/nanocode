@@ -381,8 +381,8 @@ int conv_save(const Conversation *conv, const char *path)
     if (!fp)
         return -1;
 
-    /* {"conv_id":"<id>","turns":[...]} */
-    fputs("{\"conv_id\":", fp);
+    /* {"version":1,"conv_id":"<id>","turns":[...]} */
+    fputs("{\"version\":1,\"conv_id\":", fp);
     fwrite_json_string(fp, conv->conv_id);
     fputs(",\"turns\":[", fp);
 
@@ -495,6 +495,21 @@ Conversation *conv_load(Arena *arena, const char *path)
         free(toks);
         free(buf);
         return NULL;
+    }
+
+    /*
+     * Check version field — absent means legacy (v0) file, load gracefully.
+     * If present and not 1, the file was written by a newer version we don't
+     * understand; refuse to load rather than silently produce wrong results.
+     */
+    int ver_tok = find_key_in_obj(toks, 0, ntok, buf, "version");
+    if (ver_tok >= 0 && toks[ver_tok].type == JSMN_PRIMITIVE) {
+        int vlen = tok_len(toks, ver_tok);
+        if (vlen != 1 || buf[toks[ver_tok].start] != '1') {
+            free(toks);
+            free(buf);
+            return NULL;
+        }
     }
 
     /* Create the conversation object. */

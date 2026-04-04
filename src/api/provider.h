@@ -27,7 +27,8 @@ typedef struct {
     int           port;      /* 443 for cloud, 11434 for Ollama */
     int           use_tls;   /* 1 for cloud endpoints, 0 for localhost */
     const char   *api_key;   /* may be NULL for local models */
-    const char   *model;     /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
+    const char   *model;         /* e.g. "claude-opus-4-6" or "qwen2.5:9b" */
+    int           thinking_budget; /* >0 enables extended thinking (Claude only) */
 } ProviderConfig;
 
 /*

@@ -73,8 +73,9 @@ static void oneshot_on_token(const char *token, size_t len, void *ctx)
     fflush(stdout);
 }
 
-static void oneshot_on_done(int error, void *ctx)
+static void oneshot_on_done(int error, const char *stop_reason, void *ctx)
 {
+    (void)stop_reason;
     OneshotStreamCtx *oc = ctx;
     oc->error = error;
     oc->done  = 1;

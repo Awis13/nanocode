@@ -258,18 +258,74 @@ void conv_add_tool_use(Conversation *conv, const char *id,
     if (conv_grow(conv) != 0)
         return;
 
-    size_t buf_size = strlen(id) * 2 + strlen(name) * 2
+    size_t buf_size = strlen(id) * 6 + strlen(name) * 6
                     + strlen(input_json) + 128;
     char *buf = arena_alloc(conv->arena, buf_size);
     if (!buf)
         return;
 
-    int n = snprintf(buf, buf_size,
-                     "[{\"type\":\"tool_use\",\"id\":\"%s\","
-                     "\"name\":\"%s\",\"input\":%s}]",
-                     id, name, input_json);
-    if (n < 0 || (size_t)n >= buf_size)
+    /* Write prefix including opening quote of id. */
+    int prefix_len = snprintf(buf, buf_size,
+                              "[{\"type\":\"tool_use\",\"id\":\"");
+    if (prefix_len < 0 || (size_t)prefix_len >= buf_size)
         return;
+    int w = prefix_len;
+
+    /* JSON-escape id. */
+    for (const unsigned char *p = (const unsigned char *)id; *p; p++) {
+        if ((size_t)(w + 10) >= buf_size)
+            return;
+        if (*p == '"') {
+            buf[w++] = '\\'; buf[w++] = '"';
+        } else if (*p == '\\') {
+            buf[w++] = '\\'; buf[w++] = '\\';
+        } else if (*p == '\n') {
+            buf[w++] = '\\'; buf[w++] = 'n';
+        } else if (*p == '\r') {
+            buf[w++] = '\\'; buf[w++] = 'r';
+        } else if (*p == '\t') {
+            buf[w++] = '\\'; buf[w++] = 't';
+        } else if (*p < 0x20) {
+            w += snprintf(buf + w, buf_size - (size_t)w, "\\u00%02x", (unsigned)*p);
+        } else {
+            buf[w++] = (char)*p;
+        }
+    }
+
+    /* Bridge to name. */
+    int mid_len = snprintf(buf + w, buf_size - (size_t)w, "\",\"name\":\"");
+    if (mid_len < 0 || (size_t)(w + mid_len) >= buf_size)
+        return;
+    w += mid_len;
+
+    /* JSON-escape name. */
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        if ((size_t)(w + 10) >= buf_size)
+            return;
+        if (*p == '"') {
+            buf[w++] = '\\'; buf[w++] = '"';
+        } else if (*p == '\\') {
+            buf[w++] = '\\'; buf[w++] = '\\';
+        } else if (*p == '\n') {
+            buf[w++] = '\\'; buf[w++] = 'n';
+        } else if (*p == '\r') {
+            buf[w++] = '\\'; buf[w++] = 'r';
+        } else if (*p == '\t') {
+            buf[w++] = '\\'; buf[w++] = 't';
+        } else if (*p < 0x20) {
+            w += snprintf(buf + w, buf_size - (size_t)w, "\\u00%02x", (unsigned)*p);
+        } else {
+            buf[w++] = (char)*p;
+        }
+    }
+
+    /* Append input_json (already valid JSON) and closing. */
+    int tail = snprintf(buf + w, buf_size - (size_t)w,
+                        "\",\"input\":%s}]", input_json);
+    if (tail < 0 || (size_t)(w + tail) >= buf_size)
+        return;
+    w += tail;
+    (void)w;
 
     char *r = arena_strdup(conv->arena, "assistant");
     if (!r)

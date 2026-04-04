@@ -5,10 +5,11 @@ Usage (from the harbor/ directory):
     PYTHONPATH=. tb run --agent-import-path agent:NanocodeAgent hello-world
 
 Environment variables:
-    ANTHROPIC_API_KEY   required — passed through to nanocode in the container
     NANOCODE_REPO_URL   optional — git repo to clone (default: GitHub main)
     NANOCODE_REF        optional — branch/tag/commit (default: main)
-    ANTHROPIC_MODEL     optional — model override passed via --model flag
+    NANOCODE_MODEL      optional — model ID passed to nanocode (default: gemma4:26b)
+    OLLAMA_BASE_URL     optional — Ollama URL (default: http://host.docker.internal:11434)
+    ANTHROPIC_API_KEY   optional — only needed if using Anthropic provider
 """
 
 import os
@@ -44,9 +45,13 @@ class NanocodeAgent(AbstractInstalledAgent):
 
     @property
     def _env(self) -> dict[str, str]:
-        env: dict[str, str] = {
-            "ANTHROPIC_API_KEY": os.environ["ANTHROPIC_API_KEY"],
-        }
+        env: dict[str, str] = {}
+
+        # Pass API key only if set (not required for Ollama).
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+
         # Propagate repo source overrides so setup.sh can use them.
         if self._repo_url:
             env["NANOCODE_REPO_URL"] = self._repo_url
@@ -58,12 +63,17 @@ class NanocodeAgent(AbstractInstalledAgent):
         elif "NANOCODE_REF" in os.environ:
             env["NANOCODE_REF"] = os.environ["NANOCODE_REF"]
 
-        # Optional model override.
+        # Ollama provider settings forwarded to setup.sh for config generation.
+        for key in ("OLLAMA_BASE_URL", "NANOCODE_MODEL"):
+            if key in os.environ:
+                env[key] = os.environ[key]
+
+        # Model override for nanocode CLI --model flag.
         model = self._model_name
         if model is None:
-            model = os.environ.get("ANTHROPIC_MODEL")
+            model = os.environ.get("NANOCODE_MODEL") or os.environ.get("ANTHROPIC_MODEL")
         if model:
-            env["ANTHROPIC_MODEL"] = model.removeprefix("anthropic/")
+            env["NANOCODE_MODEL"] = model.removeprefix("anthropic/")
 
         return env
 
@@ -74,7 +84,7 @@ class NanocodeAgent(AbstractInstalledAgent):
     def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
         cmd_parts = ["nanocode"]
 
-        model = self._model_name or os.environ.get("ANTHROPIC_MODEL")
+        model = self._model_name or os.environ.get("NANOCODE_MODEL") or os.environ.get("ANTHROPIC_MODEL")
         if model:
             cmd_parts += ["--model", model.removeprefix("anthropic/")]
 

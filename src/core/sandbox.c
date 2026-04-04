@@ -55,7 +55,7 @@ struct ll_path_beneath_attr {
 } __attribute__((packed));
 
 /* Filesystem access rights (ABI 1, kernel 5.13+). */
-#define LL_FS_READ  ( \
+#define LL_FS_ALL  ( \
     (1ULL <<  0) |  /* EXECUTE       */ \
     (1ULL <<  1) |  /* WRITE_FILE    */ \
     (1ULL <<  2) |  /* READ_FILE     */ \
@@ -232,13 +232,26 @@ int sandbox_sbpl_build(const SandboxConfig *sc, char *buf, size_t bufsz)
     SAPPEND("(allow signal)\n");
     SAPPEND("(allow sysctl-read)\n");
 
-    /* Per-path allow rules. */
+    /* Per-path allow rules.
+     * Paths are user-supplied config values that may contain '"' or '\'.
+     * Escape both so they cannot corrupt the SBPL Scheme string literal.
+     * An unescaped '"' would close the string early; on permissive profile
+     * failure is silent (process continues unconfined), so we must be strict. */
     if (sc->allowed_paths && sc->allowed_paths[0] != '\0') {
         const char *p = sc->allowed_paths;
         char path[512];
         while (next_segment(&p, path, sizeof(path))) {
+            /* Build escaped copy of path. */
+            char esc[1024];
+            size_t ei = 0;
+            for (size_t j = 0; path[j] && ei + 3 < sizeof(esc); j++) {
+                if (path[j] == '"' || path[j] == '\\')
+                    esc[ei++] = '\\';
+                esc[ei++] = (unsigned char)path[j];
+            }
+            esc[ei] = '\0';
             SAPPEND("(allow file-read* file-write* (subpath \"");
-            SAPPEND(path);
+            SAPPEND(esc);
             SAPPEND("\"))\n");
         }
     }
@@ -301,7 +314,7 @@ static int sandbox_activate_linux(const SandboxConfig *sc)
     }
 
     /* Create ruleset covering all basic FS access rights. */
-    struct ll_ruleset_attr rattr = { .handled_access_fs = LL_FS_READ };
+    struct ll_ruleset_attr rattr = { .handled_access_fs = LL_FS_ALL };
     int rfd = ll_create_ruleset(&rattr, sizeof(rattr), 0);
     if (rfd < 0) {
         if (is_strict) {
@@ -333,7 +346,7 @@ static int sandbox_activate_linux(const SandboxConfig *sc)
                 continue;
             }
             struct ll_path_beneath_attr pattr = {
-                .allowed_access = LL_FS_READ,
+                .allowed_access = LL_FS_ALL,
                 .parent_fd      = fd
             };
             int rc = ll_add_rule(rfd, LANDLOCK_RULE_PATH_BENEATH,
@@ -451,7 +464,7 @@ void sandbox_build_prompt_block(const SandboxConfig *sc,
              "  profile: %s\n"
              "  network: %s\n"
              "  allowed_paths: %s\n"
-             "  allowed_commands: %s\n"
+             "  allowed_commands (app-layer): %s\n"
              "  max_file_size: %ld\n"
              "</sandbox_policy>",
              sc->profile  ? sc->profile  : "unknown",

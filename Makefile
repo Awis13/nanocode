@@ -82,7 +82,7 @@ tests/test_executor: tests/test_executor.c src/tools/executor.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
-                    src/util/arena.c src/util/buf.c
+                    src/util/arena.c src/util/buf.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_bash: tests/test_bash.c src/tools/bash.c src/tools/executor.c \

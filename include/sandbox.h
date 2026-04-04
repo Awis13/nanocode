@@ -26,7 +26,9 @@ typedef struct {
     int         enabled;           /* 1 if sandbox mode is active             */
     const char *profile;           /* "strict" | "permissive" | "custom"      */
     const char *allowed_paths;     /* colon-separated absolute paths, or ""   */
-    const char *allowed_commands;  /* colon-separated command basenames, or "" */
+    const char *allowed_commands;  /* colon-separated command basenames; app-layer
+                                    * filter only — NOT enforced by the OS kernel.
+                                    * Checked by bash_set_cmd_filter() at startup. */
     int         network;           /* 1 = outbound network permitted           */
     long        max_file_size;     /* max bytes per file write (0 = unlimited) */
 } SandboxConfig;

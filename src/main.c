@@ -12,6 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../include/audit.h"
 #include "../include/config.h"
 #include "../include/editor.h"
 #include "../include/json_output.h"
@@ -388,10 +389,36 @@ int main(int argc, char **argv)
 
 
     /* -----------------------------------------------------------------------
-     * Phase 3.6: One-shot dispatch — skip TUI and run a single instruction.
+     * Phase 3.6: Open audit log and wire to executor, bash, and fileops.
+     * -------------------------------------------------------------------- */
+    AuditLog *g_audit = NULL;
+    if (config_get_bool(cfg, "audit.enabled")) {
+        const char *apath = config_get_str(cfg, "audit.path");
+        char default_apath[512];
+        if (!apath || !apath[0]) {
+            const char *home = getenv("HOME");
+            snprintf(default_apath, sizeof(default_apath),
+                     "%s/.nanocode/audit.log",
+                     home && home[0] ? home : ".");
+            apath = default_apath;
+        }
+        g_audit = audit_open(apath,
+                             (long)config_get_int(cfg, "audit.max_size_bytes"),
+                             config_get_int(cfg, "audit.max_files"));
+        if (g_audit) {
+            const char *profile = config_get_str(cfg, "sandbox.profile");
+            executor_set_audit(g_audit, NULL, profile, NULL);
+            bash_set_audit(g_audit, NULL, profile);
+            fileops_set_audit(g_audit, NULL, profile);
+        }
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 3.7: One-shot dispatch — skip TUI and run a single instruction.
      * -------------------------------------------------------------------- */
     if (oneshot.enabled) {
         int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena);
+        audit_close(g_audit);
         arena_free(arena);
         return rc;
     }
@@ -402,6 +429,7 @@ int main(int argc, char **argv)
     g_loop = loop_new();
     if (!g_loop) {
         fprintf(stderr, "nanocode: failed to create event loop\n");
+        audit_close(g_audit);
         arena_free(arena);
         return 1;
     }
@@ -415,6 +443,7 @@ int main(int argc, char **argv)
                     "nanocode: invalid --timeout value: %s\n", cli_timeout_arg);
             loop_free(g_loop);
             g_loop = NULL;
+            audit_close(g_audit);
             arena_free(arena);
             return 1;
         }
@@ -463,6 +492,7 @@ int main(int argc, char **argv)
             loop_free(g_loop);
             g_loop = NULL;
             status_file_remove(status_path);
+            audit_close(g_audit);
             arena_free(arena);
             return 1;
         }
@@ -479,6 +509,7 @@ int main(int argc, char **argv)
 
     loop_free(g_loop);
     g_loop = NULL;
+    audit_close(g_audit);
     arena_free(arena);
     return 0;
 }

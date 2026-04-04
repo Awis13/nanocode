@@ -11,6 +11,7 @@
 
 #include "executor.h"
 #include "fileops.h"
+#include "../../include/audit.h"
 #include "../util/arena.h"
 #include "../util/buf.h"
 
@@ -36,15 +37,31 @@
  * Per-session resource limits (set once at startup via fileops_set_limits)
  * ---------------------------------------------------------------------- */
 
-static long s_max_file_size     = 10 * 1024 * 1024;  /* 10 MB */
-static int  s_max_files_created = 50;
-static int  s_files_created     = 0;
+static long        s_max_file_size      = 10 * 1024 * 1024;  /* 10 MB */
+static int         s_max_files_created  = 50;
+static int         s_files_created      = 0;
+static AuditLog   *s_fo_audit_log       = NULL;
+static const char *s_fo_audit_session   = NULL;
+static const char *s_fo_audit_sandbox   = NULL;
 
 void fileops_set_limits(long max_file_size_bytes, int max_files_created)
 {
     s_max_file_size     = max_file_size_bytes;
     s_max_files_created = max_files_created;
     s_files_created     = 0;
+}
+
+void fileops_set_audit(AuditLog *log, const char *session_id,
+                       const char *sandbox_profile)
+{
+    s_fo_audit_log     = log;
+    s_fo_audit_session = session_id;
+    s_fo_audit_sandbox = sandbox_profile;
+}
+
+int fileops_get_files_created(void)
+{
+    return s_files_created;
 }
 
 /* -------------------------------------------------------------------------
@@ -688,6 +705,8 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
 
     /* Enforce file size limit on resulting content. */
     if (s_max_file_size > 0 && (long)out_len > s_max_file_size) {
+        audit_sandbox_deny(s_fo_audit_log, path,
+                           s_fo_audit_session, s_fo_audit_sandbox);
         char msg[128];
         snprintf(msg, sizeof(msg),
                  "{\"error\":\"file too large\",\"limit_bytes\":%ld}",

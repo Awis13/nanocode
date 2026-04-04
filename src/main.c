@@ -45,8 +45,10 @@
 #include "../src/tui/statusbar.h"
 #include "../src/agent/tool_protocol.h"
 #include "../src/tui/commands.h"
+#include "../src/tui/diff_confirm.h"
 #include "../src/tui/input.h"
 #include "../src/tui/renderer.h"
+#include "../src/util/buf.h"
 #include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;
@@ -575,6 +577,7 @@ int main(int argc, char **argv)
     int         cli_sandbox         = 0;
     int         cli_daemon          = 0;
     int         cli_dry_run         = 0;
+    int         cli_auto_apply      = 0;
     int         cli_readonly        = 0;
     int         cli_pipe            = 0;
     int         cli_raw             = 0;
@@ -618,6 +621,8 @@ int main(int argc, char **argv)
             cli_daemon = 1;
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             cli_dry_run = 1;
+        } else if (strcmp(argv[i], "--auto-apply") == 0) {
+            cli_auto_apply = 1;
         } else if (strcmp(argv[i], "--readonly") == 0) {
             cli_readonly = 1;
         } else if (strcmp(argv[i], "--sandbox") == 0) {
@@ -866,6 +871,15 @@ int main(int argc, char **argv)
         (long)config_get_int(cfg, "sandbox.max_file_size"),
         config_get_int(cfg, "session.max_files_created")
     );
+    /* Register inline diff confirmation unless running non-interactively. */
+    static DiffConfirmCtx s_diff_confirm_ctx;
+    if (!cli_dry_run && !cli_pipe && !oneshot.enabled && isatty(STDIN_FILENO)) {
+        s_diff_confirm_ctx.auto_apply = cli_auto_apply;
+        s_diff_confirm_ctx.fd_out     = STDOUT_FILENO;
+        s_diff_confirm_ctx.fd_in      = STDIN_FILENO;
+        fileops_set_confirm_cb(diff_confirm_cb, &s_diff_confirm_ctx);
+    }
+
     bash_set_cmd_filter(
         config_get_str(cfg, "sandbox.allowed_commands"),
         config_get_str(cfg, "sandbox.denied_commands")

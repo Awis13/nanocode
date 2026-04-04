@@ -388,21 +388,27 @@ TEST(test_write_session_file_limit)
     fileops_set_limits(1024 * 1024, 2); /* allow at most 2 new files */
     Arena *a = arena_new(2 << 20);
 
-    /* First file — OK */
     const char *p1 = TMP_PREFIX "fc1.txt";
+    const char *p2 = TMP_PREFIX "fc2.txt";
+    const char *p3 = TMP_PREFIX "fc3.txt";
+
+    /* Clean up any stale files from previous runs so new-file detection is accurate. */
+    unlink(p1);
+    unlink(p2);
+    unlink(p3);
+
+    /* First file — OK */
     char args[512];
     snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"a\"}", p1);
     ToolResult r1 = fileops_write(a, args);
     ASSERT_EQ(r1.error, 0);
 
     /* Second file — OK */
-    const char *p2 = TMP_PREFIX "fc2.txt";
     snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"b\"}", p2);
     ToolResult r2 = fileops_write(a, args);
     ASSERT_EQ(r2.error, 0);
 
-    /* Third file — should fail */
-    const char *p3 = TMP_PREFIX "fc3.txt";
+    /* Third file — should fail: limit is 2 */
     snprintf(args, sizeof(args), "{\"path\":\"%s\",\"content\":\"c\"}", p3);
     ToolResult r3 = fileops_write(a, args);
     ASSERT_EQ(r3.error, 1);

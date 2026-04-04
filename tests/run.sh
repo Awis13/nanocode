@@ -10,7 +10,7 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 echo "Running smoke test..."
-output=$("$BINARY" 2>&1)
+output=$("$BINARY" 2>&1) || true  # binary may exit non-zero in non-TTY environments (pipe mode)
 echo "$output" | grep -q "nanocode" && echo "PASS: binary runs and prints version" || (echo "FAIL: unexpected output: $output" && exit 1)
 
 echo "All tests passed."

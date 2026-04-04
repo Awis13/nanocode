@@ -15,6 +15,7 @@
 
 #include "test.h"
 #include "../src/api/retry.h"
+#include "../src/api/provider.h"
 
 /* --------------------------------------------------------------------------
  * retry_should_retry
@@ -147,6 +148,74 @@ TEST(test_retry_custom_config_cap) {
     ASSERT_EQ(retry_next_delay_ms(&cfg, 3, -1), 5000);
 }
 
+/* --------------------------------------------------------------------------
+ * retry_should_continue — max_output_tokens continuation (CMP-304)
+ * ------------------------------------------------------------------------ */
+
+TEST(test_continuation_max_tokens_triggers) {
+    ASSERT_TRUE(retry_should_continue("max_tokens"));
+}
+
+TEST(test_continuation_end_turn_no_trigger) {
+    ASSERT_FALSE(retry_should_continue("end_turn"));
+}
+
+TEST(test_continuation_tool_use_no_trigger) {
+    ASSERT_FALSE(retry_should_continue("tool_use"));
+}
+
+TEST(test_continuation_null_no_trigger) {
+    ASSERT_FALSE(retry_should_continue(NULL));
+}
+
+TEST(test_continuation_empty_no_trigger) {
+    ASSERT_FALSE(retry_should_continue(""));
+}
+
+TEST(test_continuation_stop_sequence_no_trigger) {
+    ASSERT_FALSE(retry_should_continue("stop_sequence"));
+}
+
+TEST(test_continuation_constant_is_3) {
+    ASSERT_EQ(RETRY_MAX_CONTINUATION, 3);
+}
+
+/* --------------------------------------------------------------------------
+ * provider_model_supports_thinking (CMP-304)
+ * ------------------------------------------------------------------------ */
+
+TEST(test_thinking_opus_4_6_supported) {
+    ASSERT_TRUE(provider_model_supports_thinking("claude-opus-4-6"));
+}
+
+TEST(test_thinking_sonnet_4_6_supported) {
+    ASSERT_TRUE(provider_model_supports_thinking("claude-sonnet-4-6"));
+}
+
+TEST(test_thinking_opus_4_5_supported) {
+    ASSERT_TRUE(provider_model_supports_thinking("claude-opus-4-5"));
+}
+
+TEST(test_thinking_claude_3_not_supported) {
+    ASSERT_FALSE(provider_model_supports_thinking("claude-3-5-sonnet-20241022"));
+}
+
+TEST(test_thinking_gpt4_not_supported) {
+    ASSERT_FALSE(provider_model_supports_thinking("gpt-4o"));
+}
+
+TEST(test_thinking_gemma_not_supported) {
+    ASSERT_FALSE(provider_model_supports_thinking("gemma4:26b"));
+}
+
+TEST(test_thinking_null_not_supported) {
+    ASSERT_FALSE(provider_model_supports_thinking(NULL));
+}
+
+TEST(test_thinking_empty_not_supported) {
+    ASSERT_FALSE(provider_model_supports_thinking(""));
+}
+
 int main(void)
 {
     fprintf(stderr, "=== test_retry ===\n");
@@ -169,6 +238,23 @@ int main(void)
     RUN_TEST(test_retry_retry_after_capped_at_max_delay);
     RUN_TEST(test_retry_custom_config_sequence);
     RUN_TEST(test_retry_custom_config_cap);
+    /* CMP-304: continuation retry */
+    RUN_TEST(test_continuation_max_tokens_triggers);
+    RUN_TEST(test_continuation_end_turn_no_trigger);
+    RUN_TEST(test_continuation_tool_use_no_trigger);
+    RUN_TEST(test_continuation_null_no_trigger);
+    RUN_TEST(test_continuation_empty_no_trigger);
+    RUN_TEST(test_continuation_stop_sequence_no_trigger);
+    RUN_TEST(test_continuation_constant_is_3);
+    /* CMP-304: adaptive thinking model detection */
+    RUN_TEST(test_thinking_opus_4_6_supported);
+    RUN_TEST(test_thinking_sonnet_4_6_supported);
+    RUN_TEST(test_thinking_opus_4_5_supported);
+    RUN_TEST(test_thinking_claude_3_not_supported);
+    RUN_TEST(test_thinking_gpt4_not_supported);
+    RUN_TEST(test_thinking_gemma_not_supported);
+    RUN_TEST(test_thinking_null_not_supported);
+    RUN_TEST(test_thinking_empty_not_supported);
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;
 }

@@ -46,8 +46,14 @@ typedef void (*provider_token_cb)(const char *token, size_t len, void *ctx);
 typedef void (*provider_tool_cb)(const char *id, const char *name,
                                  const char *input, void *ctx);
 
-/* Called once when the stream is complete. `error` is 0 on success. */
-typedef void (*provider_done_cb)(int error, void *ctx);
+/*
+ * Called once when the stream is complete.
+ * `error`       — 0 on success, non-zero on HTTP/connection error
+ * `stop_reason` — NUL-terminated stop reason string from the provider
+ *                 (e.g. "end_turn", "max_tokens", "tool_use"), or NULL on
+ *                 error or when not applicable (non-Claude providers).
+ */
+typedef void (*provider_done_cb)(int error, const char *stop_reason, void *ctx);
 
 typedef struct Provider Provider;
 
@@ -58,12 +64,20 @@ Provider *provider_new(Loop *loop, const ProviderConfig *cfg);
 void      provider_free(Provider *p);
 
 /*
+ * Returns 1 if the model name indicates extended thinking support.
+ * Currently recognises claude-opus-4 and claude-sonnet-4 families.
+ * Returns 0 for all other models (OpenAI, Ollama, older Claude).
+ */
+int provider_model_supports_thinking(const char *model);
+
+/*
  * Start a streaming request.
  * `msgs`    — array of messages
  * `nmsg`    — message count
  * `on_token` — called for each text token as it arrives
+ * `on_tool`  — called for each completed tool_use block
  * `on_done`  — called on completion or error
- * `ctx`      — passed to both callbacks
+ * `ctx`      — passed to all callbacks
  *
  * Returns 0 if the request was started, -1 on immediate error.
  */

@@ -49,6 +49,8 @@ typedef struct {
     SseParser        *sse;        /* NULL for PROVIDER_OLLAMA */
     Buf               line_buf;   /* for PROVIDER_OLLAMA NDJSON line assembly */
     int               done;
+    /* Claude stop_reason from message_delta event */
+    char              stop_reason[32]; /* "end_turn", "max_tokens", "tool_use", "" */
     /* Claude tool_use block tracking */
     BlockType         cur_block;
     char              cur_tool_id[128];
@@ -85,6 +87,13 @@ static int on_sse_event(const char *data, size_t len, void *ctx)
 
         if (strcmp(type_val, "message_stop") == 0) {
             sc->done = 1;
+            return 0;
+        }
+
+        if (strcmp(type_val, "message_delta") == 0) {
+            /* Capture stop_reason for the caller. */
+            json_get_nested_str(&jctx, data, "delta", "stop_reason",
+                                sc->stop_reason, sizeof(sc->stop_reason));
             return 0;
         }
 
@@ -239,8 +248,10 @@ static void on_http_done(int status, void *ctx)
 {
     StreamCtx *sc = ctx;
     int err = (status == 0 || (status >= 400));
+    /* Pass stop_reason only on success; NULL on error. */
+    const char *stop_reason = (!err && sc->stop_reason[0]) ? sc->stop_reason : NULL;
     if (sc->on_done)
-        sc->on_done(err, sc->ctx);
+        sc->on_done(err, stop_reason, sc->ctx);
     if (sc->sse)
         sse_parser_free(sc->sse);
     buf_destroy(&sc->line_buf);

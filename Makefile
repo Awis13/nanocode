@@ -3,6 +3,8 @@ CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -O2
 LDFLAGS :=
 DESTDIR ?= /usr/local
 
+.DEFAULT_GOAL := all
+
 # Debug build: make DEBUG=1
 ifdef DEBUG
 CFLAGS  += -g -O0 -fsanitize=address,undefined -DDEBUG

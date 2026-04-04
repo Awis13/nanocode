@@ -54,7 +54,11 @@ struct ll_path_beneath_attr {
     int32_t  parent_fd;
 } __attribute__((packed));
 
-/* Filesystem access rights (ABI 1, kernel 5.13+). */
+/* Filesystem access rights (ABI 1, kernel 5.13+).
+ * LL_FS_ALL is the union of ALL Landlock FS access rights (read, write,
+ * execute, make_*, remove_*).  The ruleset is created with this full mask so
+ * that individual per-path rules can grant any subset; paths not covered by a
+ * rule retain the default-deny from landlock_restrict_self(). */
 #define LL_FS_ALL  ( \
     (1ULL <<  0) |  /* EXECUTE       */ \
     (1ULL <<  1) |  /* WRITE_FILE    */ \

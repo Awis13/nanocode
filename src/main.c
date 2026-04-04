@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "../include/config.h"
+#include "../include/history.h"
 #include "../include/editor.h"
 #include "../include/json_output.h"
 #include "../include/oneshot.h"
@@ -191,6 +192,8 @@ int main(int argc, char **argv)
     int         cli_readonly        = 0;
     int         cli_pipe            = 0;
     int         cli_raw             = 0;
+    int         cli_resume          = 0;  /* --resume: pick and load a past conv */
+    const char *cli_search          = NULL; /* --search <term>: grep history, exit */
     const char *cli_instruction     = NULL; /* positional arg for pipe mode */
     const char *cli_sandbox_profile = NULL;
     char        cli_timeout_arg[64] = "";
@@ -247,6 +250,14 @@ int main(int argc, char **argv)
             cli_pipe = 1;
         } else if (strcmp(argv[i], "--raw") == 0) {
             cli_raw = 1;
+        } else if (strcmp(argv[i], "--resume") == 0) {
+            cli_resume = 1;
+        } else if (strcmp(argv[i], "--search") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "nanocode: --search requires a search term\n");
+                return 1;
+            }
+            cli_search = argv[++i];
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -283,6 +294,18 @@ int main(int argc, char **argv)
         pargs.model       = NULL;
         pargs.raw         = cli_raw;
         return pipe_run(&pargs);
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 1.6: --search — stream-search all history files and exit.
+     *
+     * Does not require the full config; uses $HOME directly.
+     * -------------------------------------------------------------------- */
+    if (cli_search) {
+        int found = history_search(cli_search, STDOUT_FILENO);
+        if (found == 0)
+            fprintf(stderr, "nanocode: no matches found for '%s'\n", cli_search);
+        return 0;
     }
 
     /* -----------------------------------------------------------------------
@@ -468,6 +491,37 @@ int main(int argc, char **argv)
         }
         printf("nanocode daemon listening on %s\n", sock_path);
     }
+
+    /* -----------------------------------------------------------------------
+     * Phase 4.8: --resume — list recent conversations and load a selection.
+     *
+     * Pre-loads a past Conversation for the upcoming TUI session.
+     * Once session wiring is complete this will be passed to the coordinator;
+     * for now the result is printed to inform the user and stored for future use.
+     * -------------------------------------------------------------------- */
+    Conversation *resume_conv = NULL;
+    if (cli_resume) {
+        char *paths[HISTORY_LIST_MAX];
+        int n = history_list_recent(paths, HISTORY_LIST_MAX);
+        if (n == 0) {
+            fprintf(stderr, "nanocode: no saved conversations found\n");
+        } else {
+            printf("Recent conversations:\n");
+            for (int i = 0; i < n; i++) {
+                const char *base = strrchr(paths[i], '/');
+                printf("  %d) %s\n", i + 1, base ? base + 1 : paths[i]);
+            }
+            printf("Enter number (or 0 to skip): ");
+            fflush(stdout);
+            int choice = 0;
+            if (scanf("%d", &choice) == 1 && choice >= 1 && choice <= n)
+                resume_conv = history_load(arena, paths[choice - 1]);
+            for (int i = 0; i < n; i++) free(paths[i]);
+            if (resume_conv)
+                printf("Loaded %d turns from history.\n", resume_conv->nturn);
+        }
+    }
+    (void)resume_conv; /* wired into session coordinator once TUI is complete */
 
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);

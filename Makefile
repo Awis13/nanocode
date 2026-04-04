@@ -51,7 +51,7 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_fileops tests/test_bash tests/test_context tests/test_grep \
              tests/test_renderer tests/test_statusbar tests/test_diff_sandbox \
              tests/test_oom tests/test_retry tests/test_conversation \
-             tests/test_prompt tests/test_input tests/test_repomap tests/test_git \
+             tests/test_prompt tests/test_lsp tests/test_input tests/test_repomap tests/test_git \
              tests/test_config tests/test_mcp tests/test_tool_display \
              tests/test_session tests/test_loop tests/test_memory \
              tests/test_tool_protocol \
@@ -125,10 +125,6 @@ tests/test_prompt: tests/test_prompt.c src/agent/prompt.c src/agent/git.c \
                    src/tools/executor.c src/tools/memory.c src/util/arena.c \
                    src/util/buf.c src/util/json.c \
                    src/core/sandbox.c src/core/config.c src/core/status_file.c src/core/audit.c
-	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
-
-# CMP-126: input system — line editor, history, tab completion
-tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-147: repo map — symbol extraction, context injection
@@ -232,6 +228,15 @@ tests/test_audit: tests/test_audit.c src/core/audit.c
 
 # CMP-188: Unix pipe mode — provider resolution and stdin buffering
 tests/test_pipe: tests/test_pipe.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-149: LSP client + shared JSON-RPC layer
+tests/test_lsp: tests/test_lsp.c src/agent/lsp.c src/agent/jsonrpc.c \
+                src/util/arena.c src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-126: input system — line editor, history, tab completion
+tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test

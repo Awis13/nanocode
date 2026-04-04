@@ -29,6 +29,7 @@
  */
 
 #include "prompt.h"
+#include "git.h"
 #include "../../include/sandbox.h"
 #include "../tools/executor.h"
 #include "../util/buf.h"
@@ -125,7 +126,8 @@ static void run_cmd_to_buf(Buf *b, const char *cmd)
  * ---------------------------------------------------------------------- */
 
 PromptParts prompt_build_parts(Arena *arena, const char *cwd, void *exec,
-                                const SandboxConfig *sc, size_t budget_tokens)
+                                const SandboxConfig *sc, size_t budget_tokens,
+                                int no_git)
 {
     (void)exec; /* reserved — tools come from the global registry */
 
@@ -252,57 +254,19 @@ PromptParts prompt_build_parts(Arena *arena, const char *cwd, void *exec,
     }
 
     /* ------------------------------------------------------------------
-     * 6. Git status  +  7. Environment bootstrap
+     * 6. Git context  +  7. Environment bootstrap
      *
      * All popen() calls live inside this block.  See PROMPT_NO_POPEN.
      * ------------------------------------------------------------------ */
 #if !PROMPT_NO_POPEN
-    {
-        char *qcwd = malloc(cwdlen * 4 + 3);
-        if (qcwd) {
-            shell_quote(qcwd, cwd);
-
-            /* git status --short */
-            {
-                Buf gs; buf_init(&gs);
-                size_t len = strlen("git -C  status --short 2>/dev/null")
-                           + strlen(qcwd) + 1;
-                char *cmd = malloc(len);
-                if (cmd) {
-                    snprintf(cmd, len,
-                             "git -C %s status --short 2>/dev/null", qcwd);
-                    run_cmd_to_buf(&gs, cmd);
-                    free(cmd);
-                }
-                if (gs.len > 0) {
-                    buf_append_str(&bd, "## Git Status\n```\n");
-                    buf_append(&bd, gs.data, gs.len);
-                    buf_append_str(&bd, "```\n\n");
-                }
-                buf_destroy(&gs);
-            }
-
-            /* git log --oneline -5 */
-            {
-                Buf gl; buf_init(&gl);
-                size_t len = strlen("git -C  log --oneline -5 2>/dev/null")
-                           + strlen(qcwd) + 1;
-                char *cmd = malloc(len);
-                if (cmd) {
-                    snprintf(cmd, len,
-                             "git -C %s log --oneline -5 2>/dev/null", qcwd);
-                    run_cmd_to_buf(&gl, cmd);
-                    free(cmd);
-                }
-                if (gl.len > 0) {
-                    buf_append_str(&bd, "## Recent Commits\n```\n");
-                    buf_append(&bd, gl.data, gl.len);
-                    buf_append_str(&bd, "```\n\n");
-                }
-                buf_destroy(&gl);
-            }
-
-            free(qcwd);
+    /* -- 6. Git context (branch, diffs, untracked files, recent commits) -- */
+    if (!no_git) {
+        char *git_ctx = git_context_summary(arena, cwd);
+        if (git_ctx && git_ctx[0]) {
+            buf_append_str(&bd, git_ctx);
+            if (bd.len > 0 && bd.data[bd.len - 1] != '\n')
+                buf_append_str(&bd, "\n");
+            buf_append_str(&bd, "\n");
         }
     }
 
@@ -423,9 +387,9 @@ PromptParts prompt_build_parts(Arena *arena, const char *cwd, void *exec,
  * ---------------------------------------------------------------------- */
 
 char *prompt_build(Arena *arena, const char *cwd, void *exec,
-                   const SandboxConfig *sc)
+                   const SandboxConfig *sc, int no_git)
 {
-    PromptParts parts = prompt_build_parts(arena, cwd, exec, sc, 0);
+    PromptParts parts = prompt_build_parts(arena, cwd, exec, sc, 0, no_git);
     if (!parts.static_part && !parts.dynamic_part)
         return NULL;
 

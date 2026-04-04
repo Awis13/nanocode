@@ -60,7 +60,7 @@ static ToolResult dummy_handler(Arena *arena, const char *args_json)
 TEST(test_prompt_null_arena)
 {
     /* Must return NULL, not crash. */
-    char *p = prompt_build(NULL, "/tmp", NULL, NULL);
+    char *p = prompt_build(NULL, "/tmp", NULL, NULL, 0);
     ASSERT_NULL(p);
 }
 
@@ -69,7 +69,7 @@ TEST(test_prompt_null_cwd)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, NULL, NULL, NULL);
+    char *p = prompt_build(a, NULL, NULL, NULL, 0);
     ASSERT_NULL(p);
 
     arena_free(a);
@@ -84,7 +84,7 @@ TEST(test_prompt_contains_nanocode)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "nanocode"));
 
@@ -108,7 +108,7 @@ TEST(test_prompt_detects_makefile)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
 
     /* Must mention C project. */
@@ -128,7 +128,7 @@ TEST(test_prompt_no_project_file)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "Detected:"));
 
@@ -153,7 +153,7 @@ TEST(test_prompt_injects_claude_md)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
 
     ASSERT_NOT_NULL(strstr(p, "Always write tests."));
@@ -176,7 +176,7 @@ TEST(test_prompt_injects_nanocode_md)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "Custom nanocode config."));
 
@@ -200,7 +200,7 @@ TEST(test_prompt_claude_md_takes_priority)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "from-claude-md"));
     ASSERT_NULL(strstr(p, "from-nanocode-md"));
@@ -220,7 +220,7 @@ TEST(test_prompt_no_config_file)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, tmpdir, NULL, NULL);
+    char *p = prompt_build(a, tmpdir, NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "Project Instructions"));
 
@@ -249,7 +249,7 @@ TEST(test_prompt_git_status_in_repo)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, ".", NULL, NULL);
+    char *p = prompt_build(a, ".", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_TRUE(strlen(p) > 0);
 
@@ -270,7 +270,7 @@ TEST(test_prompt_env_contains_environment_section)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "Environment"));
 
@@ -283,7 +283,7 @@ TEST(test_prompt_env_shell_present)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "Shell:"));
 
@@ -298,7 +298,7 @@ TEST(test_prompt_graceful_not_in_git)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p); /* still returns a valid prompt */
 
     /* Git sections must be absent. */
@@ -322,7 +322,7 @@ TEST(test_prompt_lists_tools)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
 
     ASSERT_NOT_NULL(strstr(p, "bash"));
@@ -340,7 +340,7 @@ TEST(test_prompt_no_tools_section_when_empty)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "Available Tools"));
 
@@ -356,7 +356,7 @@ TEST(test_prompt_contains_cwd)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp/some/project", NULL, NULL);
+    char *p = prompt_build(a, "/tmp/some/project", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "/tmp/some/project"));
 
@@ -381,7 +381,7 @@ TEST(test_prompt_sandbox_block_injected_when_enabled)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, &sc);
+    char *p = prompt_build(a, "/tmp", NULL, &sc, 0);
     ASSERT_NOT_NULL(p);
 
     ASSERT_NOT_NULL(strstr(p, "<sandbox_policy>"));
@@ -401,7 +401,7 @@ TEST(test_prompt_sandbox_block_absent_when_disabled)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, &sc);
+    char *p = prompt_build(a, "/tmp", NULL, &sc, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "<sandbox_policy>"));
 
@@ -413,7 +413,7 @@ TEST(test_prompt_sandbox_null_sc_no_block)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    char *p = prompt_build(a, "/tmp", NULL, NULL);
+    char *p = prompt_build(a, "/tmp", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NULL(strstr(p, "<sandbox_policy>"));
 
@@ -426,7 +426,7 @@ TEST(test_prompt_sandbox_null_sc_no_block)
 
 TEST(test_parts_null_arena)
 {
-    PromptParts p = prompt_build_parts(NULL, "/tmp", NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(NULL, "/tmp", NULL, NULL, 0, 0);
     ASSERT_NULL(p.static_part);
     ASSERT_NULL(p.dynamic_part);
 }
@@ -436,7 +436,7 @@ TEST(test_parts_null_cwd)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, NULL, NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(a, NULL, NULL, NULL, 0, 0);
     ASSERT_NULL(p.static_part);
     ASSERT_NULL(p.dynamic_part);
 
@@ -448,7 +448,7 @@ TEST(test_parts_static_contains_identity)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0, 0);
     ASSERT_NOT_NULL(p.static_part);
     ASSERT_NOT_NULL(strstr(p.static_part, "nanocode"));
 
@@ -460,7 +460,7 @@ TEST(test_parts_dynamic_contains_cwd)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp/test_cwd_dir", NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(a, "/tmp/test_cwd_dir", NULL, NULL, 0, 0);
     ASSERT_NOT_NULL(p.dynamic_part);
     ASSERT_NOT_NULL(strstr(p.dynamic_part, "/tmp/test_cwd_dir"));
 
@@ -472,7 +472,7 @@ TEST(test_parts_identity_not_in_dynamic)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0, 0);
     ASSERT_NOT_NULL(p.dynamic_part);
     /* Base identity belongs in the static section only. */
     ASSERT_NULL(strstr(p.dynamic_part, "You are nanocode"));
@@ -488,7 +488,7 @@ TEST(test_parts_tools_in_static)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0, 0);
     ASSERT_NOT_NULL(p.static_part);
     ASSERT_NOT_NULL(strstr(p.static_part, "bash"));
     /* Tools section must NOT be duplicated in the dynamic section. */
@@ -512,7 +512,7 @@ TEST(test_parts_sandbox_in_static)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, &sc, 0);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, &sc, 0, 0);
     ASSERT_NOT_NULL(p.static_part);
     ASSERT_NOT_NULL(strstr(p.static_part, "<sandbox_policy>"));
     /* Sandbox block must NOT appear in the dynamic section. */
@@ -530,7 +530,7 @@ TEST(test_budget_hint_zero_absent)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 0, 0);
     ASSERT_NOT_NULL(p.dynamic_part);
     ASSERT_NULL(strstr(p.dynamic_part, "budget"));
 
@@ -542,7 +542,7 @@ TEST(test_budget_hint_present_when_nonzero)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 8192);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 8192, 0);
     ASSERT_NOT_NULL(p.dynamic_part);
     ASSERT_NOT_NULL(strstr(p.dynamic_part, "8192"));
 
@@ -554,7 +554,7 @@ TEST(test_budget_hint_not_in_static)
     Arena *a = arena_new(1 << 20);
     ASSERT_NOT_NULL(a);
 
-    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 4096);
+    PromptParts p = prompt_build_parts(a, "/tmp", NULL, NULL, 4096, 0);
     ASSERT_NOT_NULL(p.static_part);
     ASSERT_NULL(strstr(p.static_part, "4096"));
 
@@ -571,7 +571,7 @@ TEST(test_prompt_build_concatenates_parts)
     tool_registry_reset();
     tool_register("grep", "{}", dummy_handler, TOOL_SAFE_READONLY);
 
-    char *p = prompt_build(a, "/tmp/concat_test_dir", NULL, NULL);
+    char *p = prompt_build(a, "/tmp/concat_test_dir", NULL, NULL, 0);
     ASSERT_NOT_NULL(p);
     ASSERT_NOT_NULL(strstr(p, "nanocode"));           /* from static */
     ASSERT_NOT_NULL(strstr(p, "/tmp/concat_test_dir")); /* from dynamic */
@@ -583,6 +583,38 @@ TEST(test_prompt_build_concatenates_parts)
 /* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
+
+
+/* -------------------------------------------------------------------------
+ * --no-git flag: git context absent when no_git=1
+ * ---------------------------------------------------------------------- */
+
+#if !PROMPT_NO_POPEN
+
+TEST(test_prompt_no_git_suppresses_git_context)
+{
+    /*
+     * When no_git=1, the ## Git Context section must not appear even
+     * when running in an actual git repo.
+     */
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    char *p = prompt_build(a, ".", NULL, NULL, 1);
+    ASSERT_NOT_NULL(p);
+
+    ASSERT_NULL(strstr(p, "## Git Context"));
+    ASSERT_NULL(strstr(p, "## Staged Changes"));
+    ASSERT_NULL(strstr(p, "## Unstaged Changes"));
+    ASSERT_NULL(strstr(p, "## Untracked Files"));
+    /* Git Status and Recent Commits must also be absent. */
+    ASSERT_NULL(strstr(p, "## Git Status"));
+    ASSERT_NULL(strstr(p, "## Recent Commits"));
+
+    arena_free(a);
+}
+
+#endif /* !PROMPT_NO_POPEN */
 
 int main(void)
 {
@@ -630,6 +662,10 @@ int main(void)
     RUN_TEST(test_budget_hint_present_when_nonzero);
     RUN_TEST(test_budget_hint_not_in_static);
     RUN_TEST(test_prompt_build_concatenates_parts);
+
+#if !PROMPT_NO_POPEN
+    RUN_TEST(test_prompt_no_git_suppresses_git_context);
+#endif
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

@@ -396,6 +396,191 @@ char *git_branch(Arena *arena, const char *cwd)
 }
 
 /* -------------------------------------------------------------------------
+ * git_diff_cached
+ * ---------------------------------------------------------------------- */
+
+char *git_diff_cached(Arena *arena, const char *cwd, int stat_only)
+{
+    if (!arena || !cwd)
+        return NULL;
+
+#ifndef __SANITIZE_ADDRESS__
+    size_t cwdlen = strlen(cwd);
+    char  *qcwd   = malloc(cwdlen * 4 + 3);
+    if (!qcwd)
+        return NULL;
+    shell_quote(qcwd, cwd);
+
+    const char *fmt = stat_only
+        ? "git -C %s diff --cached --stat 2>/dev/null"
+        : "git -C %s diff --cached 2>/dev/null";
+
+    size_t cmdlen = strlen(fmt) + strlen(qcwd) + 1;
+    char  *cmd    = malloc(cmdlen);
+    if (!cmd) {
+        free(qcwd);
+        return NULL;
+    }
+    snprintf(cmd, cmdlen, fmt, qcwd);
+    free(qcwd);
+
+    char *result = popen_to_arena(arena, cmd);
+    free(cmd);
+    return result;
+#else
+    (void)stat_only;
+    char *empty = arena_alloc(arena, 1);
+    if (empty) empty[0] = '\0';
+    return empty;
+#endif
+}
+
+/* -------------------------------------------------------------------------
+ * git_diff_stat
+ * ---------------------------------------------------------------------- */
+
+char *git_diff_stat(Arena *arena, const char *cwd)
+{
+    if (!arena || !cwd)
+        return NULL;
+
+#ifndef __SANITIZE_ADDRESS__
+    size_t cwdlen = strlen(cwd);
+    char  *qcwd   = malloc(cwdlen * 4 + 3);
+    if (!qcwd)
+        return NULL;
+    shell_quote(qcwd, cwd);
+
+    size_t cmdlen = strlen("git -C  diff --stat 2>/dev/null")
+                  + strlen(qcwd) + 1;
+    char *cmd = malloc(cmdlen);
+    if (!cmd) {
+        free(qcwd);
+        return NULL;
+    }
+    snprintf(cmd, cmdlen, "git -C %s diff --stat 2>/dev/null", qcwd);
+    free(qcwd);
+
+    char *result = popen_to_arena(arena, cmd);
+    free(cmd);
+    return result;
+#else
+    char *empty = arena_alloc(arena, 1);
+    if (empty) empty[0] = '\0';
+    return empty;
+#endif
+}
+
+/* -------------------------------------------------------------------------
+ * git_untracked
+ * ---------------------------------------------------------------------- */
+
+char *git_untracked(Arena *arena, const char *cwd)
+{
+    if (!arena || !cwd)
+        return NULL;
+
+#ifndef __SANITIZE_ADDRESS__
+    size_t cwdlen = strlen(cwd);
+    char  *qcwd   = malloc(cwdlen * 4 + 3);
+    if (!qcwd)
+        return NULL;
+    shell_quote(qcwd, cwd);
+
+    size_t cmdlen = strlen(
+        "git -C  ls-files --others --exclude-standard 2>/dev/null")
+                  + strlen(qcwd) + 1;
+    char *cmd = malloc(cmdlen);
+    if (!cmd) {
+        free(qcwd);
+        return NULL;
+    }
+    snprintf(cmd, cmdlen,
+             "git -C %s ls-files --others --exclude-standard 2>/dev/null",
+             qcwd);
+    free(qcwd);
+
+    char *result = popen_to_arena(arena, cmd);
+    free(cmd);
+    return result;
+#else
+    char *empty = arena_alloc(arena, 1);
+    if (empty) empty[0] = '\0';
+    return empty;
+#endif
+}
+
+/* -------------------------------------------------------------------------
+ * git_special_state
+ * ---------------------------------------------------------------------- */
+
+char *git_special_state(Arena *arena, const char *cwd)
+{
+    if (!arena || !cwd)
+        return NULL;
+
+    char dotgit[4096];
+    snprintf(dotgit, sizeof(dotgit), "%s/.git", cwd);
+
+    struct stat st;
+    char probe[4096 + 32];
+
+    snprintf(probe, sizeof(probe), "%s/MERGE_HEAD", dotgit);
+    if (stat(probe, &st) == 0) {
+        const char *msg = "mid-merge (MERGE_HEAD present)";
+        size_t      len = strlen(msg);
+        char       *r   = arena_alloc(arena, len + 1);
+        if (r) memcpy(r, msg, len + 1);
+        return r;
+    }
+
+    snprintf(probe, sizeof(probe), "%s/CHERRY_PICK_HEAD", dotgit);
+    if (stat(probe, &st) == 0) {
+        const char *msg = "mid-cherry-pick (CHERRY_PICK_HEAD present)";
+        size_t      len = strlen(msg);
+        char       *r   = arena_alloc(arena, len + 1);
+        if (r) memcpy(r, msg, len + 1);
+        return r;
+    }
+
+    snprintf(probe, sizeof(probe), "%s/rebase-merge", dotgit);
+    if (stat(probe, &st) == 0 && S_ISDIR(st.st_mode)) {
+        const char *msg = "mid-rebase (rebase-merge in progress)";
+        size_t      len = strlen(msg);
+        char       *r   = arena_alloc(arena, len + 1);
+        if (r) memcpy(r, msg, len + 1);
+        return r;
+    }
+
+    snprintf(probe, sizeof(probe), "%s/rebase-apply", dotgit);
+    if (stat(probe, &st) == 0 && S_ISDIR(st.st_mode)) {
+        const char *msg = "mid-rebase (rebase-apply in progress)";
+        size_t      len = strlen(msg);
+        char       *r   = arena_alloc(arena, len + 1);
+        if (r) memcpy(r, msg, len + 1);
+        return r;
+    }
+
+    return NULL;
+}
+
+/* -------------------------------------------------------------------------
+ * count_lines — count newlines in a NUL-terminated string.
+ * ---------------------------------------------------------------------- */
+
+static int count_lines(const char *s)
+{
+    if (!s) return 0;
+    int n = 0;
+    for (; *s; s++)
+        if (*s == '\n') n++;
+    return n;
+}
+
+/* Maximum diff lines before falling back to stat-only. */
+#define GIT_DIFF_MAX_LINES 500
+
+/* -------------------------------------------------------------------------
  * git_context_summary
  * ---------------------------------------------------------------------- */
 
@@ -415,7 +600,72 @@ char *git_context_summary(Arena *arena, const char *cwd)
     Buf b;
     buf_init(&b);
 
-    /* Git Status section */
+    /* --- Branch and special state --- */
+    char *branch = git_branch(arena, cwd);
+    if (branch && branch[0]) {
+        buf_append_str(&b, "## Git Context\n");
+        buf_append_str(&b, "Branch: ");
+        buf_append_str(&b, branch);
+        buf_append_str(&b, "\n");
+    }
+
+    char *state = git_special_state(arena, cwd);
+    if (state) {
+        buf_append_str(&b, "State: ");
+        buf_append_str(&b, state);
+        buf_append_str(&b, "\n");
+    }
+
+    if (b.len > 0)
+        buf_append_str(&b, "\n");
+
+    /* --- Staged changes --- */
+    char *staged_diff = git_diff_cached(arena, cwd, 0);
+    if (staged_diff && staged_diff[0]) {
+        buf_append_str(&b, "## Staged Changes\n");
+        if (count_lines(staged_diff) > GIT_DIFF_MAX_LINES) {
+            char *stat = git_diff_cached(arena, cwd, 1);
+            buf_append_str(&b,
+                           "*(diff >500 lines — showing stat only)*\n```\n");
+            if (stat && stat[0]) buf_append_str(&b, stat);
+        } else {
+            buf_append_str(&b, "```diff\n");
+            buf_append_str(&b, staged_diff);
+        }
+        if (b.len > 0 && b.data[b.len - 1] != '\n')
+            buf_append_str(&b, "\n");
+        buf_append_str(&b, "```\n\n");
+    }
+
+    /* --- Unstaged changes --- */
+    char *unstaged_diff = git_diff(arena, cwd, NULL);
+    if (unstaged_diff && unstaged_diff[0]) {
+        buf_append_str(&b, "## Unstaged Changes\n");
+        if (count_lines(unstaged_diff) > GIT_DIFF_MAX_LINES) {
+            char *stat = git_diff_stat(arena, cwd);
+            buf_append_str(&b,
+                           "*(diff >500 lines — showing stat only)*\n```\n");
+            if (stat && stat[0]) buf_append_str(&b, stat);
+        } else {
+            buf_append_str(&b, "```diff\n");
+            buf_append_str(&b, unstaged_diff);
+        }
+        if (b.len > 0 && b.data[b.len - 1] != '\n')
+            buf_append_str(&b, "\n");
+        buf_append_str(&b, "```\n\n");
+    }
+
+    /* --- Untracked files --- */
+    char *untracked = git_untracked(arena, cwd);
+    if (untracked && untracked[0]) {
+        buf_append_str(&b, "## Untracked Files\n```\n");
+        buf_append_str(&b, untracked);
+        if (b.len > 0 && b.data[b.len - 1] != '\n')
+            buf_append_str(&b, "\n");
+        buf_append_str(&b, "```\n\n");
+    }
+
+    /* --- Git Status (porcelain) --- */
     GitStatusResult *st = git_status(arena, cwd);
     if (st && st->count > 0) {
         buf_append_str(&b, "## Git Status\n```\n");
@@ -428,8 +678,8 @@ char *git_context_summary(Arena *arena, const char *cwd)
         buf_append_str(&b, "```\n\n");
     }
 
-    /* Recent Commits section */
-    char *log = git_log(arena, cwd, 5);
+    /* --- Recent Commits (10) --- */
+    char *log = git_log(arena, cwd, 10);
     if (log && log[0]) {
         buf_append_str(&b, "## Recent Commits\n```\n");
         buf_append_str(&b, log);

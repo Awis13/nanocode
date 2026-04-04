@@ -38,6 +38,7 @@
 #include "../src/tui/commands.h"
 #include "../src/tui/input.h"
 #include "../src/tui/renderer.h"
+#include "repl_coordinator.h"
 #include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;
@@ -146,13 +147,13 @@ static void oneshot_on_done(int error, const char *stop_reason, void *ctx)
  * write plain-text output to stdout, and return 0 on success or 1 on error.
  */
 static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
-                       const SandboxConfig *sc, Arena *arena)
+                       const SandboxConfig *sc, Arena *arena, int no_git)
 {
     char cwd[1024];
     if (getcwd(cwd, sizeof(cwd)) == NULL)
         cwd[0] = '\0';
 
-    const char *system_prompt = prompt_build(arena, cwd[0] ? cwd : ".", NULL, sc);
+    const char *system_prompt = prompt_build(arena, cwd[0] ? cwd : ".", NULL, sc, no_git);
     if (!system_prompt) {
         fprintf(stderr, "nanocode: failed to build system prompt\n");
         return 1;
@@ -250,6 +251,7 @@ int main(int argc, char **argv)
     int         cli_readonly        = 0;
     int         cli_pipe            = 0;
     int         cli_raw             = 0;
+    int         cli_no_git          = 0;  /* --no-git: disable git context */
     int         cli_resume          = 0;  /* --resume: pick and load a past conv */
     const char *cli_search          = NULL; /* --search <term>: grep history, exit */
     const char *cli_instruction     = NULL; /* positional arg for pipe mode */
@@ -316,6 +318,8 @@ int main(int argc, char **argv)
                 return 1;
             }
             cli_search = argv[++i];
+        } else if (strcmp(argv[i], "--no-git") == 0) {
+            cli_no_git = 1;
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -497,7 +501,7 @@ int main(int argc, char **argv)
      * Phase 3.7: One-shot dispatch — skip TUI and run a single instruction.
      * -------------------------------------------------------------------- */
     if (oneshot.enabled) {
-        int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena);
+        int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena, cli_no_git);
         audit_close(g_audit);
         arena_free(arena);
         return rc;
@@ -631,8 +635,23 @@ int main(int argc, char **argv)
         rearm_anim_timer(g_loop, 0);
     }
 
+    /* -----------------------------------------------------------------------
+     * Phase 6: Wire interactive REPL (non-daemon, TTY sessions only).
+     * ---------------------------------------------------------------------- */
+    if (!cli_daemon && isatty(STDIN_FILENO)) {
+        ReplGlobals rg;
+        rg.renderer   = &g_renderer;
+        rg.repl_ctx   = &g_repl_ctx;
+        rg.sb_in_tok  = &g_sb_in_tok;
+        rg.sb_out_tok = &g_sb_out_tok;
+        rg.sb_turn    = &g_sb_turn;
+        repl_coordinator_setup(g_loop, &provider_cfg, &sc, arena, &rg);
+    }
+
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
+
+    repl_coordinator_teardown();
 
     if (g_statusbar) {
         statusbar_clear(g_statusbar);

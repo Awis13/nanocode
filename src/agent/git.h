@@ -50,6 +50,33 @@ GitStatusResult *git_status(Arena *arena, const char *cwd);
 char *git_diff(Arena *arena, const char *cwd, const char *path);
 
 /*
+ * Run `git diff --cached` (or `--cached --stat` when `stat_only` != 0)
+ * in `cwd`.  Returns arena-allocated NUL-terminated string, or NULL on
+ * failure.  Returns empty string when the index is clean.
+ */
+char *git_diff_cached(Arena *arena, const char *cwd, int stat_only);
+
+/*
+ * Run `git diff --stat` in `cwd` (summary of unstaged changes).
+ * Returns arena-allocated NUL-terminated string, or NULL on failure.
+ */
+char *git_diff_stat(Arena *arena, const char *cwd);
+
+/*
+ * Run `git ls-files --others --exclude-standard` in `cwd`.
+ * Returns arena-allocated NUL-terminated newline-separated list of
+ * untracked file paths, or NULL on failure.
+ */
+char *git_untracked(Arena *arena, const char *cwd);
+
+/*
+ * Detect mid-merge, mid-rebase, or mid-cherry-pick state.
+ * Returns an arena-allocated human-readable description, or NULL when
+ * no special state is active.
+ */
+char *git_special_state(Arena *arena, const char *cwd);
+
+/*
  * Run `git log --oneline -<n>` in `cwd`.
  * Returns arena-allocated NUL-terminated string, or NULL on failure.
  */
@@ -62,9 +89,28 @@ char *git_log(Arena *arena, const char *cwd, int n);
 char *git_branch(Arena *arena, const char *cwd);
 
 /*
- * Build a compact git context block for system prompt injection.
+ * Build a comprehensive git context block for system prompt injection.
  *
- * Format:
+ * Sections (all conditional on data being present):
+ *   ## Git Context
+ *   Branch: <name>
+ *   State:  <mid-merge|mid-rebase|mid-cherry-pick>
+ *
+ *   ## Staged Changes
+ *   ```diff
+ *   <git diff --cached output, truncated to stat if >500 lines>
+ *   ```
+ *
+ *   ## Unstaged Changes
+ *   ```diff
+ *   <git diff output, truncated to stat if >500 lines>
+ *   ```
+ *
+ *   ## Untracked Files
+ *   ```
+ *   <file list>
+ *   ```
+ *
  *   ## Git Status
  *   ```
  *   M  src/file.c
@@ -73,7 +119,7 @@ char *git_branch(Arena *arena, const char *cwd);
  *
  *   ## Recent Commits
  *   ```
- *   abc1234 commit message
+ *   abc1234 commit message   (last 10)
  *   ```
  *
  * Returns arena-allocated NUL-terminated string.

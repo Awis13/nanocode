@@ -7,11 +7,13 @@
 
 #include "executor.h"
 #include "../../include/status_file.h"
+#include "../../include/audit.h"
 
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 /* Forward declaration — json_escape is defined in the serialization section. */
 static size_t json_escape(char *dst, size_t cap, const char *src, size_t srclen);
@@ -56,6 +58,25 @@ void executor_set_tool_event_cb(tool_event_cb cb, void *ctx)
 {
     s_event_cb  = cb;
     s_event_ctx = ctx;
+}
+
+
+/* -------------------------------------------------------------------------
+ * Audit context — set by executor_set_audit()
+ * ---------------------------------------------------------------------- */
+
+static AuditLog   *s_audit_log     = NULL;
+static const char *s_audit_session = NULL;
+static const char *s_audit_sandbox = NULL;
+static const char *s_audit_cwd     = NULL;
+
+void executor_set_audit(AuditLog *log, const char *session_id,
+                        const char *sandbox_profile, const char *cwd)
+{
+    s_audit_log     = log;
+    s_audit_session = session_id;
+    s_audit_sandbox = sandbox_profile;
+    s_audit_cwd     = cwd;
 }
 
 void tool_register(const char *name, const char *schema_json, ToolHandler fn,
@@ -240,6 +261,35 @@ ToolResult tool_invoke_noside(Arena *arena, const char *name,
                               const char *args_json)
 {
     return invoke_raw(arena, name, args_json);
+}
+
+
+
+/* -------------------------------------------------------------------------
+ * executor_invoke — audit-aware wrapper around tool_invoke
+ *
+ * Measures wall-clock duration and calls audit_tool_call() when an audit
+ * log has been configured via executor_set_audit().
+ * ---------------------------------------------------------------------- */
+
+ToolResult executor_invoke(Arena *arena, const char *name, const char *args_json)
+{
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    ToolResult r = tool_invoke(arena, name, args_json);
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long duration_ms = (long)((t1.tv_sec - t0.tv_sec) * 1000L
+                              + (t1.tv_nsec - t0.tv_nsec) / 1000000L);
+
+    if (s_audit_log) {
+        audit_tool_call(s_audit_log, name, args_json,
+                        r.content, !r.error, duration_ms,
+                        s_audit_session, s_audit_sandbox, s_audit_cwd);
+    }
+
+    return r;
 }
 
 /* -------------------------------------------------------------------------

@@ -63,7 +63,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_dryrun \
              tests/test_oneshot \
              tests/test_pet \
-             tests/test_commands
+             tests/test_commands \
+             tests/test_audit
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -74,8 +75,9 @@ tests/test_buf: tests/test_buf.c src/util/buf.c
 tests/test_json: tests/test_json.c src/util/json.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -Ivendor/jsmn -o $@ $^
 
+# CMP-210: audit.c is linked because executor.c calls audit_tool_call
 tests/test_executor: tests/test_executor.c src/tools/executor.c src/util/arena.c \
-                     src/util/json.c src/core/status_file.c
+                     src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
@@ -83,7 +85,7 @@ tests/test_fileops: tests/test_fileops.c src/tools/fileops.c \
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_bash: tests/test_bash.c src/tools/bash.c src/tools/executor.c \
-                 src/util/arena.c src/util/json.c src/core/status_file.c
+                 src/util/arena.c src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_context: tests/test_context.c src/agent/context.c src/util/arena.c
@@ -121,7 +123,7 @@ tests/test_conversation: tests/test_conversation.c src/agent/conversation.c \
 tests/test_prompt: tests/test_prompt.c src/agent/prompt.c src/agent/git.c \
                    src/tools/executor.c src/tools/memory.c src/util/arena.c \
                    src/util/buf.c src/util/json.c \
-                   src/core/sandbox.c src/core/config.c src/core/status_file.c
+                   src/core/sandbox.c src/core/config.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-126: input system — line editor, history, tab completion
@@ -135,8 +137,7 @@ tests/test_repomap: tests/test_repomap.c src/agent/repomap.c src/util/arena.c
 # CMP-148: git integration — repo detection, status, tools
 tests/test_git: tests/test_git.c src/agent/git.c src/tools/executor.c \
                 src/util/arena.c src/util/buf.c src/util/json.c \
-                src/core/status_file.c \
-                src/core/status_file.c
+                src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-141: config system — TOML parser, provider config
@@ -145,13 +146,13 @@ tests/test_config: tests/test_config.c src/core/config.c src/util/arena.c
 
 # CMP-150: MCP client — JSON-RPC 2.0, tool discovery, config
 tests/test_mcp: tests/test_mcp.c src/agent/mcp.c src/tools/executor.c \
-                src/util/arena.c src/util/buf.c src/util/json.c src/core/status_file.c src/util/json.c src/core/status_file.c
+                src/util/arena.c src/util/buf.c src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-124: tool output display — invocation header, result truncation, diff colouring
 tests/test_tool_display: tests/test_tool_display.c src/tui/tool_display.c \
                          src/tools/executor.c src/util/arena.c \
-                         src/util/json.c src/core/status_file.c src/core/status_file.c
+                         src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-183: session event log — bounded NDJSON with rotation
@@ -164,7 +165,7 @@ tests/test_loop: tests/test_loop.c src/core/loop.c
 
 # CMP-153: cross-session memory — memory_write tool and memory_load
 tests/test_memory: tests/test_memory.c src/tools/memory.c src/tools/executor.c \
-                   src/util/arena.c src/util/json.c src/core/status_file.c src/util/json.c src/core/status_file.c
+                   src/util/arena.c src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-119: tool use protocol — parse + dispatch tool calls, schema payload
@@ -175,7 +176,7 @@ tests/test_tool_protocol: tests/test_tool_protocol.c \
                            src/util/arena.c \
                            src/util/buf.c \
                            src/util/json.c \
-                           src/core/status_file.c
+                           src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) $(TEST_LDFLAGS) -o $@ $^
 
 # CMP-200: OS-level sandbox enforcement — macOS SBPL + Linux Landlock
@@ -207,7 +208,7 @@ tests/test_daemon: tests/test_daemon.c src/core/daemon.c src/core/loop.c \
 
 # CMP-226: --dry-run and --readonly execution modes
 tests/test_dryrun: tests/test_dryrun.c src/tools/executor.c src/util/arena.c \
-                   src/util/json.c src/core/status_file.c
+                   src/util/json.c src/core/status_file.c src/core/audit.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-243: pet module — sprite data model + state machine
@@ -224,7 +225,9 @@ tests/test_commands: tests/test_commands.c src/tui/commands.c \
                      src/util/arena.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
-
+# CMP-210: structured audit log — JSONL tool call + sandbox denial logging
+tests/test_audit: tests/test_audit.c src/core/audit.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test
 

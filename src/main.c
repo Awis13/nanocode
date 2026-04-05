@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "../include/audit.h"
 #include "../include/benchmark.h"
@@ -24,6 +25,7 @@
 #include "../include/sandbox.h"
 #include "../include/status_file.h"
 #include "../include/daemon.h"
+#include "../src/tui/renderer.h"
 #include "../src/agent/conversation.h"
 #include "../src/agent/prompt.h"
 #include "../src/api/provider.h"
@@ -1055,6 +1057,12 @@ int main(int argc, char **argv)
         repl_ctx_init(&g_repl_ctx, g_loop, &g_pet, g_statusbar, &g_spinner);
         rearm_anim_timer(g_loop, 0);
     }
+
+    /* Create renderer for the interactive session.
+     * g_renderer is used by the anim timer to reflow on SIGWINCH.
+     * Not created in daemon mode (no interactive TUI). */
+    if (!cli_daemon)
+        g_renderer = renderer_new(STDOUT_FILENO, arena);
 
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);

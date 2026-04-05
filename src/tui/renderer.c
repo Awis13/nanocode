@@ -46,6 +46,7 @@
 #define FG256_CMT   "\033[38;5;242m"  /* gray     — comments    */
 #define FG256_H1    "\033[38;5;214m"  /* bright orange — h1     */
 #define FG256_H2    "\033[38;5;220m"  /* yellow        — h2/h3  */
+#define SGR_DIM     "\033[2m"   /* dim — separators, labels    */
 
 /* =========================================================================
  * Internal constants
@@ -278,21 +279,30 @@ static const char * const kw_go[] = {
     "break","case","chan","const","continue","default","defer","else",
     "fallthrough","for","func","go","goto","if","import","interface","map",
     "package","range","return","select","struct","switch","type","var",
-    "nil","true","false","iota","make","new","len","cap","append","copy",
-    "delete","close","panic","recover","print","println","error",
-    "int","int8","int16","int32","int64","uint","uint8","uint16","uint32",
-    "uint64","uintptr","float32","float64","complex64","complex128",
-    "bool","byte","rune","string","any","comparable",NULL
+    /* built-in identifiers */
+    "true","false","nil","iota",
+    "bool","byte","rune","string","error",
+    "int","int8","int16","int32","int64",
+    "uint","uint8","uint16","uint32","uint64","uintptr",
+    "float32","float64","complex64","complex128",
+    "append","cap","close","complex","copy","delete","imag","len",
+    "make","new","panic","print","println","real","recover",NULL
 };
 
 static const char * const kw_rust[] = {
     "as","async","await","break","const","continue","crate","dyn","else",
-    "enum","extern","false","fn","for","if","impl","in","let","loop",
-    "match","mod","move","mut","pub","ref","return","self","Self","static",
-    "struct","super","trait","true","type","union","unsafe","use","where",
-    "while","i8","i16","i32","i64","i128","isize","u8","u16","u32","u64",
-    "u128","usize","f32","f64","bool","char","str","String","Vec","Option",
-    "Result","Box","None","Some","Ok","Err",NULL
+    "enum","extern","false","fn","for","if","impl","in","let","loop","match",
+    "mod","move","mut","pub","ref","return","self","Self","static","struct",
+    "super","trait","true","type","unsafe","use","where","while",
+    /* built-in types */
+    "bool","char","str",
+    "i8","i16","i32","i64","i128","isize",
+    "u8","u16","u32","u64","u128","usize",
+    "f32","f64",
+    /* common macros / identifiers */
+    "Some","None","Ok","Err","Vec","String","Box","Rc","Arc",
+    "println","print","panic","assert","assert_eq","assert_ne",
+    "todo","unimplemented","unreachable",NULL
 };
 
 static bool is_kw(const char *s, int n, const char * const *kws)
@@ -305,22 +315,18 @@ static bool is_kw(const char *s, int n, const char * const *kws)
 }
 
 /*
- * Emit a dim language label right-aligned in the first line of a code fence.
- * e.g.:  ──────────────────────────────────── python
- * No-op when lang is empty.
+ * Emit a right-aligned dim language label before the first fence line.
+ * Format: ─────────────── lang\n  (dashes pad to terminal width)
  */
 static void emit_fence_header(Renderer *r)
 {
     if (r->langlen == 0) return;
-
     const char *col = r->is_256color ? FG256_CMT : SGR_DIM;
-    /* Number of ─ glyphs (each 1 column wide): fill up to (term_width - langlen - 1) */
     int dashes = r->term_width - r->langlen - 1;
     if (dashes < 0) dashes = 0;
-
     out_str(r, col);
     for (int i = 0; i < dashes; i++)
-        out_raw(r, "\xe2\x94\x80", 3); /* U+2500 BOX DRAWINGS LIGHT HORIZONTAL */
+        out_raw(r, "\xe2\x94\x80", 3); /* U+2500 ─ */
     out_raw(r, " ", 1);
     out_raw(r, r->lang, r->langlen);
     out_str(r, SGR_RESET);
@@ -408,7 +414,7 @@ static void emit_code_line(Renderer *r, const char *line, int len,
         /* ---- Language with keyword list ------------------------------ */
         if (kws) {
             /* C/C++/Go/JS line comment */
-            if ((is_c || is_js || is_go) && c=='/' && i+1<len && line[i+1]=='/') {
+            if ((is_c || is_js || is_go || is_rust) && c=='/' && i+1<len && line[i+1]=='/') {
                 out_str(r, cmt_col);
                 out_raw(r, line+i, len-i);
                 out_str(r, SGR_RESET);
@@ -542,7 +548,7 @@ static int process_one(Renderer *r)
             r->llen  = 0;
             r->col   = 0;
             r->bol   = true;
-            emit_fence_header(r);  /* right-aligned dim language label */
+            emit_fence_header(r);
             return 1;
         }
         if (c != '\r' && r->langlen < LANG_CAP - 1)

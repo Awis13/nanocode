@@ -236,7 +236,7 @@ void repl_coordinator_setup(Loop *loop,
         cwd[0] = '\0';
 
     PromptParts parts = prompt_build_parts(
-        arena, cwd[0] ? cwd : ".", NULL, sc, 0);
+        arena, cwd[0] ? cwd : ".", NULL, sc, 0, 0);
     provider_cfg->system_cache_static = parts.static_part;
 
     memset(&g_rs, 0, sizeof(g_rs));

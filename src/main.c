@@ -125,52 +125,6 @@ static int session_timeout_cb(int timer_id, int events, void *ctx)
     return -1;  /* removes the timer */
 }
 
-/* -------------------------------------------------------------------------
- * Startup memory check (CMP-403)
- * ---------------------------------------------------------------------- */
-
-/*
- * Return available physical memory in MB.
- * macOS: total RAM via hw.memsize.  Linux: MemAvailable from /proc/meminfo.
- * Returns 0 if the query fails.
- */
-static long get_available_memory_mb(void)
-{
-#ifdef __APPLE__
-    uint64_t memsize = 0;
-    size_t   len     = sizeof(memsize);
-    if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) < 0)
-        return 0;
-    return (long)(memsize / (1024ULL * 1024ULL));
-#else
-    FILE *f = fopen("/proc/meminfo", "r");
-    if (!f)
-        return 0;
-    char line[256];
-    long kb = 0;
-    while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "MemAvailable:", 13) == 0) {
-            sscanf(line + 13, " %ld", &kb);
-            break;
-        }
-    }
-    fclose(f);
-    return kb / 1024;
-#endif
-}
-
-static void check_startup_memory(int arena_max_mb)
-{
-    long avail = get_available_memory_mb();
-    if (avail > 0 && avail < (long)(2 * arena_max_mb)) {
-        fprintf(stderr,
-                "nanocode: warning: available memory (%ld MB) < 2x arena "
-                "limit (%d MB); consider reducing memory.arena_max_mb in "
-                "~/.nanocode/config.toml\n",
-                avail, arena_max_mb);
-    }
-}
-
 /* Stub dispatch — placeholder until agent wiring is complete. */
 static const char *daemon_dispatch_stub(const char *prompt, const char *cwd,
                                          void *ctx)
@@ -788,38 +742,14 @@ int main(int argc, char **argv)
 
     /* -----------------------------------------------------------------------
      * Phase 2: Load configuration.
-     *
-     * cfg_arena: small arena (256 KB) for config data only; kept alive for
-     * the whole session so config string pointers remain valid.
-     * conv_arena: large arena (memory.arena_max_mb, default 256 MB) for
-     * conversation turns and per-turn allocations.
      * -------------------------------------------------------------------- */
-    Arena  *cfg_arena = arena_new(256 * 1024); /* 256 KB for config */
-    if (!cfg_arena) {
-        fprintf(stderr, "nanocode: failed to allocate config arena\n");
-        return 1;
-    }
-    Config *cfg = config_load(cfg_arena);
+    Arena  *arena = arena_new(1 << 20);   /* 1 MB — covers config + session   */
+    Config *cfg   = config_load(arena);
     if (!cfg) {
         fprintf(stderr, "nanocode: failed to load configuration\n");
-        arena_free(cfg_arena);
+        arena_free(arena);
         return 1;
     }
-
-    /* Size the conversation arena from config. */
-    int arena_max_mb = config_get_int(cfg, "memory.arena_max_mb");
-    if (arena_max_mb <= 0 || arena_max_mb > 65536)
-        arena_max_mb = 256;
-    Arena *arena = arena_new((size_t)arena_max_mb * 1024 * 1024);
-    if (!arena) {
-        fprintf(stderr, "nanocode: failed to allocate conversation arena "
-                "(%d MB)\n", arena_max_mb);
-        arena_free(cfg_arena);
-        return 1;
-    }
-
-    /* Warn if available system memory < 2x arena limit. */
-    check_startup_memory(arena_max_mb);
 
     /* Apply CLI overrides on top of the loaded config. */
     if (cli_sandbox)
@@ -889,14 +819,6 @@ int main(int argc, char **argv)
         provider_cfg.temperature_x1000 = -1;
         provider_cfg.top_p_x1000       = -1;
         provider_cfg.max_output_tokens  = 0;
-        /* Timeout: timeout_sec (seconds) overrides timeout_ms when set (CMP-402) */
-        {
-            int timeout_sec_cfg = config_get_int(cfg, "provider.timeout_sec");
-            int timeout_ms_cfg  = config_get_int(cfg, "provider.timeout_ms");
-            provider_cfg.timeout_ms = (timeout_sec_cfg > 0)
-                                      ? timeout_sec_cfg * 1000
-                                      : timeout_ms_cfg;
-        }
     }
 
     /* -----------------------------------------------------------------------
@@ -933,11 +855,11 @@ int main(int argc, char **argv)
 
     if (sc.enabled) {
         if (sandbox_validate(&sc) != 0) {
-            arena_free(arena); arena_free(cfg_arena);
+            arena_free(arena);
             return 1;
         }
         if (sandbox_activate(&sc) != 0) {
-            arena_free(arena); arena_free(cfg_arena);
+            arena_free(arena);
             return 1;
         }
     }
@@ -999,7 +921,7 @@ int main(int argc, char **argv)
     if (oneshot.enabled) {
         int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena);
         audit_close(g_audit);
-        arena_free(arena); arena_free(cfg_arena);
+        arena_free(arena);
         return rc;
     }
 
@@ -1011,7 +933,7 @@ int main(int argc, char **argv)
     if (cli_benchmark) {
         int rc = benchmark_run(&bench_flags, &provider_cfg, cfg);
         audit_close(g_audit);
-        arena_free(arena); arena_free(cfg_arena);
+        arena_free(arena);
         return rc;
     }
 
@@ -1034,7 +956,7 @@ int main(int argc, char **argv)
     if (!g_loop) {
         fprintf(stderr, "nanocode: failed to create event loop\n");
         audit_close(g_audit);
-        arena_free(arena); arena_free(cfg_arena);
+        arena_free(arena);
         return 1;
     }
 
@@ -1048,7 +970,7 @@ int main(int argc, char **argv)
             loop_free(g_loop);
             g_loop = NULL;
             audit_close(g_audit);
-            arena_free(arena); arena_free(cfg_arena);
+            arena_free(arena);
             return 1;
         }
         timeout_secs = cli_secs;
@@ -1097,7 +1019,7 @@ int main(int argc, char **argv)
             g_loop = NULL;
             status_file_remove(status_path);
             audit_close(g_audit);
-            arena_free(arena); arena_free(cfg_arena);
+            arena_free(arena);
             return 1;
         }
         printf("nanocode daemon listening on %s\n", sock_path);
@@ -1191,6 +1113,6 @@ int main(int argc, char **argv)
     loop_free(g_loop);
     g_loop = NULL;
     audit_close(g_audit);
-    arena_free(arena); arena_free(cfg_arena);
+    arena_free(arena);
     return 0;
 }

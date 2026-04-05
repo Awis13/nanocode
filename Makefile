@@ -70,7 +70,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_network_errors \
              tests/test_benchmark \
              tests/test_spinner \
-             tests/test_profile
+             tests/test_profile \
+             tests/test_session_persist
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -247,10 +248,10 @@ tests/test_history: tests/test_history.c src/core/history.c \
 tests/test_pipe: tests/test_pipe.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
-
 # CMP-403: JSONL streaming + arena OOM recovery
 tests/test_session_persist: tests/test_session_persist.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
 # CMP-149: LSP client + shared JSON-RPC layer
 tests/test_lsp: tests/test_lsp.c src/agent/lsp.c src/agent/jsonrpc.c \
                 src/util/arena.c src/util/buf.c

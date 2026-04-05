@@ -24,7 +24,7 @@ endif
 # Source collection
 # ---------------------------------------------------------------------------
 
-SRC_DIRS := src src/core src/agent src/api src/tools src/tui src/util
+SRC_DIRS := src src/core src/agent src/api src/tools src/tui src/util src/benchmark
 SRCS     := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
 
 # BearSSL: use pre-built static library from vendor/bearssl/build/
@@ -66,7 +66,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_commands \
              tests/test_audit \
              tests/test_pipe \
-             tests/test_history
+             tests/test_history \
+             tests/test_benchmark
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -244,6 +245,11 @@ tests/test_lsp: tests/test_lsp.c src/agent/lsp.c src/agent/jsonrpc.c \
 # CMP-126: input system — line editor, history, tab completion
 tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-404: auto-benchmark — scoring, built-in cases, TOML loader
+tests/test_benchmark: tests/test_benchmark.c src/benchmark/benchmark.c \
+                      src/util/buf.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -DBENCHMARK_TEST -o $@ $^
 
 .PHONY: all clean install test asan bearssl unit-test
 

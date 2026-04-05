@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "../include/audit.h"
+#include "../include/benchmark.h"
 #include "../include/config.h"
 #include "../include/history.h"
 #include "../include/profile.h"
@@ -265,6 +266,9 @@ int main(int argc, char **argv)
     char        cli_timeout_arg[64] = "";
     OneShotFlags oneshot;
     memset(&oneshot, 0, sizeof(oneshot));
+    BenchFlags bench_flags;
+    memset(&bench_flags, 0, sizeof(bench_flags));
+    int         cli_benchmark       = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--json") == 0) { cli_json = 1; break; }
@@ -338,6 +342,12 @@ int main(int argc, char **argv)
             cli_profile_name = argv[++i];
         } else if (strcmp(argv[i], "--list-profiles") == 0) {
             cli_list_profiles = 1;
+        } else if (strcmp(argv[i], "--benchmark") == 0) {
+            cli_benchmark = 1;
+        } else if (strcmp(argv[i], "--compare") == 0) {
+            bench_flags.do_compare = 1;
+        } else if (strcmp(argv[i], "--tune") == 0) {
+            bench_flags.do_tune = 1;
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -562,6 +572,18 @@ int main(int argc, char **argv)
      * -------------------------------------------------------------------- */
     if (oneshot.enabled) {
         int rc = run_oneshot(&oneshot, &provider_cfg, &sc, arena, cli_no_git);
+        audit_close(g_audit);
+        arena_free(arena);
+        return rc;
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 3.8: Benchmark dispatch — run test suite and exit.
+     *
+     * --benchmark [--compare] [--tune]
+     * -------------------------------------------------------------------- */
+    if (cli_benchmark) {
+        int rc = benchmark_run(&bench_flags, &provider_cfg, cfg);
         audit_close(g_audit);
         arena_free(arena);
         return rc;

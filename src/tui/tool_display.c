@@ -105,7 +105,9 @@ void tool_display_invocation(int fd, const char *tool,
 
     /* Top border: dim ╭──────... to visually open the tool block. */
     {
-        char border[TOOL_DISPLAY_WIDTH * 3 + 32]; /* ─ is 3 bytes each */
+        /* Layout: DIM(3) + ╭(3) + (WIDTH-1)×─(3) + RESET(3) + '\n'(1) = 247;
+         * TOOL_DISPLAY_WIDTH*3 = 240 accounts for the UTF-8 chars, +32 covers ANSI sequences */
+        char border[TOOL_DISPLAY_WIDTH * 3 + 32];
         int bpos = 0;
         /* DIM + ╭ (U+256D: \xe2\x95\xad) */
         memcpy(border + bpos, ANSI_DIM, sizeof(ANSI_DIM) - 1);

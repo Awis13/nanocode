@@ -20,11 +20,16 @@ LDFLAGS += -pie -Wl,-z,relro,-z,now
 endif
 endif
 
+# macOS: link AppKit framework for GUI mode (gui_macos.c uses ObjC runtime)
+ifeq ($(shell uname),Darwin)
+LDFLAGS += -framework Cocoa
+endif
+
 # ---------------------------------------------------------------------------
 # Source collection
 # ---------------------------------------------------------------------------
 
-SRC_DIRS := src src/core src/agent src/api src/tools src/tui src/util src/benchmark
+SRC_DIRS := src src/core src/agent src/api src/tools src/tui src/util src/benchmark src/gui
 SRCS     := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
 
 # BearSSL: use pre-built static library from vendor/bearssl/build/

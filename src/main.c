@@ -53,6 +53,8 @@
 #include "../src/tui/input.h"
 #include "../src/core/repl_coordinator.h"
 #include "pipe.h"
+#include "../include/gui.h"
+#include "gui/gui_coordinator.h"
 
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_winch   = 0;  /* set by SIGWINCH handler */
@@ -406,6 +408,7 @@ int main(int argc, char **argv)
     char        cli_timeout_arg[64] = "";
     OneShotFlags oneshot;
     memset(&oneshot, 0, sizeof(oneshot));
+    int         cli_gui             = 0;   /* --gui: open native GUI window */
     BenchFlags bench_flags;
     memset(&bench_flags, 0, sizeof(bench_flags));
     int         cli_benchmark       = 0;
@@ -490,6 +493,8 @@ int main(int argc, char **argv)
             bench_flags.do_compare = 1;
         } else if (strcmp(argv[i], "--tune") == 0) {
             bench_flags.do_tune = 1;
+        } else if (strcmp(argv[i], "--gui") == 0) {
+            cli_gui = 1;
         } else {
             char err[256];
             int rc = oneshot_parse_arg(argc, argv, &i, &oneshot,
@@ -777,6 +782,44 @@ int main(int argc, char **argv)
         audit_close(g_audit);
         arena_free(arena);
         return rc;
+    }
+
+    /* -----------------------------------------------------------------------
+     * Phase 3.9: GUI mode — native window (macOS AppKit / Linux stub).
+     *
+     * --gui branches here before the TUI main loop.  The AppKit run loop owns
+     * the main thread; loop_step() is driven by a 16 ms NSTimer instead.
+     * -------------------------------------------------------------------- */
+    if (cli_gui) {
+        Loop *gui_loop = loop_new();
+        if (!gui_loop) {
+            fprintf(stderr, "nanocode: failed to create event loop\n");
+            audit_close(g_audit);
+            arena_free(arena);
+            return 1;
+        }
+        g_loop = gui_loop;  /* expose to signal handler */
+
+        GuiWindow *win = gui_init(gui_loop, arena);
+        if (!win) {
+            /* gui_init() already printed the platform error. */
+            loop_free(gui_loop);
+            g_loop = NULL;
+            audit_close(g_audit);
+            arena_free(arena);
+            return 1;
+        }
+
+        gui_coordinator_setup(win, gui_loop, &provider_cfg, &sc, arena);
+        gui_run(win);
+        gui_coordinator_teardown();
+        gui_destroy(win);
+
+        loop_free(gui_loop);
+        g_loop = NULL;
+        audit_close(g_audit);
+        arena_free(arena);
+        return 0;
     }
 
     /* -----------------------------------------------------------------------

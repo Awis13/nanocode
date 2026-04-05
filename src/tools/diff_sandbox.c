@@ -36,14 +36,9 @@
 #define ANSI_GREEN  "\033[32m"
 #define ANSI_CYAN   "\033[36m"
 
-/* Lazily check whether stdout supports colour.  Thread-safe in practice
- * because all writes happen synchronously before any agent parallelism. */
-static int s_color = -1;
-static int use_color(void)
+static int use_color(int fd)
 {
-    if (s_color < 0)
-        s_color = isatty(STDOUT_FILENO) ? 1 : 0;
-    return s_color;
+    return isatty(fd);
 }
 
 /* -------------------------------------------------------------------------
@@ -227,44 +222,45 @@ static EditOp *compute_diff(Arena *arena,
  * Coloured line printers
  * ---------------------------------------------------------------------- */
 
-static void print_hunk_hdr(int old_start, int old_count,
+static void print_hunk_hdr(int fd, int old_start, int old_count,
                            int new_start, int new_count)
 {
-    if (use_color())
-        printf(ANSI_CYAN "@@ -%d,%d +%d,%d @@\n" ANSI_RESET,
-               old_start, old_count, new_start, new_count);
+    if (use_color(fd))
+        dprintf(fd, ANSI_CYAN "@@ -%d,%d +%d,%d @@\n" ANSI_RESET,
+                old_start, old_count, new_start, new_count);
     else
-        printf("@@ -%d,%d +%d,%d @@\n",
-               old_start, old_count, new_start, new_count);
+        dprintf(fd, "@@ -%d,%d +%d,%d @@\n",
+                old_start, old_count, new_start, new_count);
 }
 
-static void print_file_hdr(const char *a, const char *b)
+static void print_file_hdr(int fd, const char *a, const char *b)
 {
-    if (use_color())
-        printf(ANSI_BOLD "--- %s\n+++ %s\n" ANSI_RESET, a, b);
+    if (use_color(fd))
+        dprintf(fd, ANSI_BOLD "--- %s\n+++ %s\n" ANSI_RESET, a, b);
     else
-        printf("--- %s\n+++ %s\n", a, b);
+        dprintf(fd, "--- %s\n+++ %s\n", a, b);
 }
 
-static void print_add(const char *s)
+static void print_add(int fd, const char *s)
 {
-    if (use_color()) printf(ANSI_GREEN "+%s" ANSI_RESET, s);
-    else             printf("+%s", s);
+    if (use_color(fd)) dprintf(fd, ANSI_GREEN "+%s" ANSI_RESET, s);
+    else               dprintf(fd, "+%s", s);
 }
 
-static void print_del(const char *s)
+static void print_del(int fd, const char *s)
 {
-    if (use_color()) printf(ANSI_RED "-%s" ANSI_RESET, s);
-    else             printf("-%s", s);
+    if (use_color(fd)) dprintf(fd, ANSI_RED "-%s" ANSI_RESET, s);
+    else               dprintf(fd, "-%s", s);
 }
 
-static void print_ctx(const char *s) { printf(" %s", s); }
+static void print_ctx(int fd, const char *s) { dprintf(fd, " %s", s); }
 
 /* -------------------------------------------------------------------------
  * Unified diff renderer for a single file
  * ---------------------------------------------------------------------- */
 
-static void print_unified_diff(const char *path,
+static void print_unified_diff(int fd,
+                               const char *path,
                                const char *old_content,
                                const char *new_content,
                                Arena *arena)
@@ -272,7 +268,7 @@ static void print_unified_diff(const char *path,
     char hdr_a[4096], hdr_b[4096];
     snprintf(hdr_a, sizeof(hdr_a), "a/%s", path);
     snprintf(hdr_b, sizeof(hdr_b), "b/%s", path);
-    print_file_hdr(hdr_a, hdr_b);
+    print_file_hdr(fd, hdr_a, hdr_b);
 
     Lines a = split_lines(arena, old_content ? old_content : "");
     Lines b = split_lines(arena, new_content ? new_content : "");
@@ -282,8 +278,8 @@ static void print_unified_diff(const char *path,
 
     if (nops < 0 || !ops) {
         /* Fallback for large/unanticipated files: show full new content. */
-        print_hunk_hdr(0, a.count, a.count > 0 ? 1 : 0, b.count);
-        for (int k = 0; k < b.count; k++) print_add(b.lines[k]);
+        print_hunk_hdr(fd, 0, a.count, a.count > 0 ? 1 : 0, b.count);
+        for (int k = 0; k < b.count; k++) print_add(fd, b.lines[k]);
         return;
     }
 
@@ -346,20 +342,20 @@ static void print_unified_diff(const char *path,
         int new_start = (new_count > 0) ? new_line
                                         : (new_line > 1 ? new_line - 1 : 0);
 
-        print_hunk_hdr(old_start, old_count, new_start, new_count);
+        print_hunk_hdr(fd, old_start, old_count, new_start, new_count);
 
         for (int j = k; j < hend; j++) {
             switch (ops[j].kind) {
             case OP_EQ:
-                print_ctx(a.lines[ops[j].a_idx]);
+                print_ctx(fd, a.lines[ops[j].a_idx]);
                 old_line++; new_line++;
                 break;
             case OP_DEL:
-                print_del(a.lines[ops[j].a_idx]);
+                print_del(fd, a.lines[ops[j].a_idx]);
                 old_line++;
                 break;
             case OP_ADD:
-                print_add(b.lines[ops[j].b_idx]);
+                print_add(fd, b.lines[ops[j].b_idx]);
                 new_line++;
                 break;
             }
@@ -407,8 +403,18 @@ void diff_sandbox_show(DiffSandbox *sb)
 {
     if (!sb || sb->count == 0) return;
     for (PatchEntry *e = sb->head; e; e = e->next)
-        print_unified_diff(e->path, e->old_content, e->new_content, sb->arena);
+        print_unified_diff(STDOUT_FILENO, e->path, e->old_content, e->new_content, sb->arena);
     fflush(stdout);
+}
+
+void diff_sandbox_show_one(const char *path,
+                           const char *old_content,
+                           const char *new_content,
+                           int fd,
+                           Arena *arena)
+{
+    if (!path || !new_content || !arena) return;
+    print_unified_diff(fd, path, old_content, new_content, arena);
 }
 
 int diff_sandbox_apply(DiffSandbox *sb)

@@ -610,11 +610,27 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
                 fclose(cf);
             }
         }
-        int decision = s_confirm_cb(path, old_content, content, s_confirm_ctx);
+        char *replacement = NULL;
+        int decision = s_confirm_cb(path, old_content, content,
+                                    &replacement, s_confirm_ctx);
+        if (decision == 0) {
+            free(replacement);
+            char msg[4096];
+            snprintf(msg, sizeof(msg),
+                     "write_file: change rejected by user: %s", path);
+            return err_result(arena, msg);
+        }
         if (decision < 0)
-            s_confirm_cb = NULL;  /* apply-all: disable for future writes */
-        if (decision == 0)
-            return err_result(arena, "write_file: change rejected by user");
+            s_confirm_cb = NULL;
+        if (replacement) {
+            size_t rlen = strlen(replacement);
+            char  *rc   = arena_alloc(arena, rlen + 1);
+            if (!rc) { free(replacement); return err_result(arena, "write_file: OOM"); }
+            memcpy(rc, replacement, rlen + 1);
+            free(replacement);
+            content = rc;
+            clen    = rlen;
+        }
     }
 
     if (ensure_parent_dirs(path) < 0) {
@@ -774,11 +790,27 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
 
     /* Invoke confirmation callback if registered. */
     if (s_confirm_cb) {
-        int decision = s_confirm_cb(path, file_buf, out_buf, s_confirm_ctx);
+        char *replacement = NULL;
+        int decision = s_confirm_cb(path, file_buf, out_buf,
+                                    &replacement, s_confirm_ctx);
+        if (decision == 0) {
+            free(replacement);
+            char msg[4096];
+            snprintf(msg, sizeof(msg),
+                     "edit_file: change rejected by user: %s", path);
+            return err_result(arena, msg);
+        }
         if (decision < 0)
-            s_confirm_cb = NULL;  /* apply-all: disable for future writes */
-        if (decision == 0)
-            return err_result(arena, "edit_file: change rejected by user");
+            s_confirm_cb = NULL;
+        if (replacement) {
+            size_t rlen = strlen(replacement);
+            char  *rc   = arena_alloc(arena, rlen + 1);
+            if (!rc) { free(replacement); return err_result(arena, "edit_file: OOM"); }
+            memcpy(rc, replacement, rlen + 1);
+            free(replacement);
+            out_buf = rc;
+            out_len = rlen;
+        }
     }
 
     /* Write back. */

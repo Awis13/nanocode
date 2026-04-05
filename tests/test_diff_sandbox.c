@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
 /* -------------------------------------------------------------------------
@@ -283,6 +284,51 @@ TEST(test_queue_ignored_after_discard)
 }
 
 /* -------------------------------------------------------------------------
+ * diff_sandbox_show_one — dedicated tests
+ * ---------------------------------------------------------------------- */
+
+/* show_one must not crash on a simple edit. */
+TEST(test_show_one_no_crash)
+{
+    Arena *a = arena_new(1024 * 1024);
+    /* Write output to /dev/null so it doesn't pollute test output. */
+    int devnull = open("/dev/null", O_WRONLY);
+    ASSERT_TRUE(devnull >= 0);
+    diff_sandbox_show_one("foo.c", "old line\n", "new line\n", devnull, a);
+    close(devnull);
+    arena_free(a);
+}
+
+/* show_one for a new file (NULL old_content) must not crash. */
+TEST(test_show_one_new_file_no_crash)
+{
+    Arena *a = arena_new(1024 * 1024);
+    int devnull = open("/dev/null", O_WRONLY);
+    ASSERT_TRUE(devnull >= 0);
+    diff_sandbox_show_one("new.c", NULL, "brand new\n", devnull, a);
+    close(devnull);
+    arena_free(a);
+}
+
+/* show_one actually writes bytes to the fd (pipe round-trip). */
+TEST(test_show_one_writes_to_fd)
+{
+    Arena *a = arena_new(1024 * 1024);
+    int pfd[2];
+    ASSERT_EQ(pipe(pfd), 0);
+
+    diff_sandbox_show_one("x.c", "aaa\n", "bbb\n", pfd[1], a);
+    close(pfd[1]);
+
+    char buf[4096];
+    ssize_t n = read(pfd[0], buf, sizeof(buf) - 1);
+    close(pfd[0]);
+    ASSERT_TRUE(n > 0); /* some diff output was written */
+
+    arena_free(a);
+}
+
+/* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
 
@@ -300,6 +346,10 @@ int main(void)
     RUN_TEST(test_show_new_file_no_crash);
     RUN_TEST(test_apply_atomic_cleanup_on_failure);
     RUN_TEST(test_queue_ignored_after_discard);
+
+    RUN_TEST(test_show_one_no_crash);
+    RUN_TEST(test_show_one_new_file_no_crash);
+    RUN_TEST(test_show_one_writes_to_fd);
 
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;

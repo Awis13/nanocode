@@ -49,6 +49,7 @@
 #include "../src/tui/statusbar.h"
 #include "../src/agent/tool_protocol.h"
 #include "../src/tui/commands.h"
+#include "../src/tui/diff_confirm.h"
 #include "../src/tui/input.h"
 #include "../src/core/repl_coordinator.h"
 #include "pipe.h"
@@ -200,9 +201,10 @@ static void oneshot_on_done(int error, const char *stop_reason, void *ctx)
 static int oneshot_fileops_cb(const char *path,
                                const char *old_content,
                                const char *new_content,
+                               char **out_replacement,
                                void *ctx)
 {
-    (void)ctx; (void)new_content;
+    (void)ctx; (void)new_content; (void)out_replacement;
     const char *action = old_content ? "modified" : "created";
     printf("[%s] %s\n", action, path);
     fflush(stdout);
@@ -390,6 +392,7 @@ int main(int argc, char **argv)
     int         cli_sandbox         = 0;
     int         cli_daemon          = 0;
     int         cli_dry_run         = 0;
+    int         cli_auto_apply      = 0;
     int         cli_readonly        = 0;
     int         cli_pipe            = 0;
     int         cli_raw             = 0;
@@ -432,6 +435,8 @@ int main(int argc, char **argv)
             cli_daemon = 1;
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             cli_dry_run = 1;
+        } else if (strcmp(argv[i], "--auto-apply") == 0) {
+            cli_auto_apply = 1;
         } else if (strcmp(argv[i], "--readonly") == 0) {
             cli_readonly = 1;
         } else if (strcmp(argv[i], "--sandbox") == 0) {
@@ -680,6 +685,22 @@ int main(int argc, char **argv)
         (long)config_get_int(cfg, "sandbox.max_file_size"),
         config_get_int(cfg, "session.max_files_created")
     );
+    /* Register inline diff confirmation.
+     *
+     * In normal interactive mode: show diff and prompt [y/n/e/a].
+     * In dry-run mode: show diff but never apply (dry_run_only=1 causes the
+     *   callback to return 0 without prompting; the executor discards that
+     *   rejection and returns synthetic {"dry_run":true} instead).
+     * In pipe / oneshot / non-tty modes: no callback (auto-apply). */
+    static DiffConfirmCtx s_diff_confirm_ctx;
+    if (!cli_pipe && !oneshot.enabled && isatty(STDIN_FILENO)) {
+        s_diff_confirm_ctx.auto_apply   = cli_auto_apply;
+        s_diff_confirm_ctx.dry_run_only = cli_dry_run;
+        s_diff_confirm_ctx.fd_out       = STDOUT_FILENO;
+        s_diff_confirm_ctx.fd_in        = STDIN_FILENO;
+        fileops_set_confirm_cb(diff_confirm_cb, &s_diff_confirm_ctx);
+    }
+
     bash_set_cmd_filter(
         config_get_str(cfg, "sandbox.allowed_commands"),
         config_get_str(cfg, "sandbox.denied_commands")

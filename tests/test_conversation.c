@@ -247,6 +247,33 @@ TEST(test_conv_add_tool_use_content)
     arena_free(a);
 }
 
+TEST(test_conv_add_tool_use_escape)
+{
+    Arena *a = arena_new(1 << 20);
+    ASSERT_NOT_NULL(a);
+
+    Conversation *conv = conv_new(a);
+    ASSERT_NOT_NULL(conv);
+
+    /* id and name contain chars that must be JSON-escaped */
+    conv_add_tool_use(conv, "id\"with\\quote", "name\nwith\nnewlines",
+                      "{\"x\":1}");
+    ASSERT_EQ(conv->nturn, 1);
+
+    const char *c = conv->turns[0].content;
+    ASSERT_NOT_NULL(c);
+
+    /* Escaped quote in id must appear as \" in the output. */
+    ASSERT_NOT_NULL(strstr(c, "id\\\"with\\\\quote"));
+    /* Escaped newlines in name must appear as \n. */
+    ASSERT_NOT_NULL(strstr(c, "name\\nwith\\nnewlines"));
+    /* The raw chars must NOT be present (would break JSON). */
+    ASSERT_NULL(strstr(c, "id\"with"));
+    ASSERT_NULL(strstr(c, "name\nwith"));
+
+    arena_free(a);
+}
+
 TEST(test_conv_add_tool_result_content)
 {
     Arena *a = arena_new(1 << 20);
@@ -544,6 +571,7 @@ int main(void)
     RUN_TEST(test_conv_to_messages_basic);
 
     RUN_TEST(test_conv_add_tool_use_content);
+    RUN_TEST(test_conv_add_tool_use_escape);
     RUN_TEST(test_conv_add_tool_result_content);
 
     RUN_TEST(test_roundtrip_basic);

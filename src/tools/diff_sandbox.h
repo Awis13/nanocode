@@ -65,4 +65,19 @@ int diff_sandbox_apply(DiffSandbox *sb);
  */
 void diff_sandbox_discard(DiffSandbox *sb);
 
+/*
+ * Print a unified diff for a single in-memory change to `fd`.
+ * Useful for inline confirmation prompts before writing a file.
+ *   path        — label shown in the diff header
+ *   old_content — current content, or NULL for a new file
+ *   new_content — proposed new content
+ *   fd          — output file descriptor (e.g. STDOUT_FILENO or a pipe write-end)
+ *   arena       — scratch allocator (diff metadata is arena-allocated)
+ */
+void diff_sandbox_show_one(const char *path,
+                           const char *old_content,
+                           const char *new_content,
+                           int fd,
+                           Arena *arena);
+
 #endif /* DIFF_SANDBOX_H */

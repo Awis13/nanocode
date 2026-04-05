@@ -13,12 +13,18 @@
 /*
  * Context passed to diff_confirm_cb via fileops_set_confirm_cb.
  *
- *   auto_apply — if non-zero, silently apply every change (like pressing 'a')
- *   fd_out     — file descriptor for output (usually STDOUT_FILENO)
- *   fd_in      — file descriptor for input  (usually STDIN_FILENO)
+ *   auto_apply   — if non-zero, silently apply every change (like pressing 'a')
+ *   dry_run_only — if non-zero, show the diff but do not prompt and return 0
+ *                  (reject).  The executor discards the rejection and returns a
+ *                  synthetic {"dry_run":true} result, so the file is never
+ *                  written.  This satisfies --dry-run: diffs are shown but
+ *                  nothing is applied.
+ *   fd_out       — file descriptor for output (usually STDOUT_FILENO)
+ *   fd_in        — file descriptor for input  (usually STDIN_FILENO)
  */
 typedef struct {
     int auto_apply;
+    int dry_run_only;
     int fd_out;
     int fd_in;
 } DiffConfirmCtx;

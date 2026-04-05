@@ -34,43 +34,37 @@
 /* -------------------------------------------------------------------------
  * capture_diff -- render unified diff into a heap-allocated string
  *
- * Passes the pipe write-end directly to diff_sandbox_show_one() via its fd
- * parameter — no stdout redirection or dup2 needed.
+ * Uses tmpfile() instead of a pipe to avoid the pipe-buffer deadlock:
+ * pipe buffers are ~16 KB on macOS / ~64 KB on Linux — large diffs would
+ * block the writer before the reader starts, causing a deadlock.
+ * tmpfile() has no such limit.
  * Returns malloc'd NUL-terminated string; caller frees.
- * Returns NULL on allocation / pipe failure.
+ * Returns NULL on allocation / tmpfile failure.
  * ---------------------------------------------------------------------- */
 
 static char *capture_diff(const char *path,
                            const char *old_content,
                            const char *new_content)
 {
-    int pfd[2];
-    if (pipe(pfd) < 0) return NULL;
+    FILE *tmp = tmpfile();
+    if (!tmp) return NULL;
 
     Arena *arena = arena_new(DIFF_ARENA_SIZE);
     if (arena) {
-        diff_sandbox_show_one(path, old_content, new_content, pfd[1], arena);
+        diff_sandbox_show_one(path, old_content, new_content, fileno(tmp), arena);
         arena_free(arena);
     }
-    close(pfd[1]);
 
-    size_t cap  = 4096;
-    size_t used = 0;
-    char  *buf  = malloc(cap);
-    if (!buf) { close(pfd[0]); return NULL; }
+    long sz = ftell(tmp);
+    if (sz < 0) { fclose(tmp); return NULL; }
 
-    ssize_t n;
-    while ((n = read(pfd[0], buf + used, cap - used - 1)) > 0) {
-        used += (size_t)n;
-        if (used + 1 >= cap) {
-            cap *= 2;
-            char *nb = realloc(buf, cap);
-            if (!nb) { free(buf); close(pfd[0]); return NULL; }
-            buf = nb;
-        }
-    }
-    close(pfd[0]);
-    buf[used] = '\0';
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(tmp); return NULL; }
+
+    rewind(tmp);
+    size_t rd = fread(buf, 1, (size_t)sz, tmp);
+    fclose(tmp);
+    buf[rd] = '\0';
     return buf;
 }
 
@@ -191,7 +185,12 @@ static char *open_in_editor(const char *content)
     if (pid < 0) { unlink(tmp_path); return NULL; }
 
     if (pid == 0) {
-        /* Child: exec the editor directly — no shell interpretation. */
+        /* Child: exec the editor directly — no shell interpretation.
+         * NOTE: execvp does not shell-split $EDITOR values that contain
+         * embedded spaces or arguments (e.g. EDITOR="emacs -nw").  Only
+         * the first word is used as the executable; the rest is passed as
+         * a literal argument to the editor.  Users who need args should
+         * wrap the editor in a shell script instead. */
         char *const argv[] = { (char *)editor, (char *)tmp_path, NULL };
         execvp(editor, argv);
         _exit(127); /* execvp failed */
@@ -249,6 +248,11 @@ int diff_confirm_cb(const char *path,
         (void)truncated;
         free(diff);
     }
+
+    /* dry-run-only: show diff but do not prompt.
+     * Return 0 (reject) — the executor discards the error and returns a
+     * synthetic {"dry_run":true} result, so the file is never written. */
+    if (dcc && dcc->dry_run_only) return 0;
 
     const char *prompt =
         "\x1b[1mApply this change?\x1b[0m "

@@ -871,12 +871,19 @@ int main(int argc, char **argv)
         (long)config_get_int(cfg, "sandbox.max_file_size"),
         config_get_int(cfg, "session.max_files_created")
     );
-    /* Register inline diff confirmation unless running non-interactively. */
+    /* Register inline diff confirmation.
+     *
+     * In normal interactive mode: show diff and prompt [y/n/e/a].
+     * In dry-run mode: show diff but never apply (dry_run_only=1 causes the
+     *   callback to return 0 without prompting; the executor discards that
+     *   rejection and returns synthetic {"dry_run":true} instead).
+     * In pipe / oneshot / non-tty modes: no callback (auto-apply). */
     static DiffConfirmCtx s_diff_confirm_ctx;
-    if (!cli_dry_run && !cli_pipe && !oneshot.enabled && isatty(STDIN_FILENO)) {
-        s_diff_confirm_ctx.auto_apply = cli_auto_apply;
-        s_diff_confirm_ctx.fd_out     = STDOUT_FILENO;
-        s_diff_confirm_ctx.fd_in      = STDIN_FILENO;
+    if (!cli_pipe && !oneshot.enabled && isatty(STDIN_FILENO)) {
+        s_diff_confirm_ctx.auto_apply   = cli_auto_apply;
+        s_diff_confirm_ctx.dry_run_only = cli_dry_run;
+        s_diff_confirm_ctx.fd_out       = STDOUT_FILENO;
+        s_diff_confirm_ctx.fd_in        = STDIN_FILENO;
         fileops_set_confirm_cb(diff_confirm_cb, &s_diff_confirm_ctx);
     }
 

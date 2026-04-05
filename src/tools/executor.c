@@ -143,8 +143,26 @@ static ToolResult invoke_raw(Arena *arena, const char *name,
     assert(arena != NULL);
     assert(name  != NULL);
 
-    /* Dry-run mode: skip execution, return synthetic result. */
+    /* Dry-run mode: skip execution, return synthetic result.
+     *
+     * For write_file and edit_file, run the actual handler first so the
+     * fileops confirm callback fires and the user sees the diff — but discard
+     * the result and always return synthetic.  This satisfies the spec:
+     * "--dry-run shows diffs but never applies."  The confirm callback must be
+     * installed with dry_run_only=1 so it shows the diff and returns 0
+     * (reject) without prompting; fileops returns a rejection error which we
+     * throw away here. */
     if (s_exec_mode == EXEC_MODE_DRY_RUN) {
+        int is_file_mutating = (strcmp(name, "write_file") == 0 ||
+                                strcmp(name, "edit_file")  == 0);
+        if (is_file_mutating) {
+            for (int i = 0; i < s_count; i++) {
+                if (strcmp(s_registry[i].name, name) == 0) {
+                    (void)s_registry[i].fn(arena, args_json ? args_json : "{}");
+                    break;
+                }
+            }
+        }
         fprintf(stderr, "[dry-run] would call: %s(%s)\n",
                 name, args_json ? args_json : "{}");
         static const char msg[] = "{\"dry_run\":true}";

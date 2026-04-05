@@ -625,6 +625,7 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
         if (replacement) {
             size_t rlen = strlen(replacement);
             char  *rc   = arena_alloc(arena, rlen + 1);
+            if (!rc) { free(replacement); return err_result(arena, "write_file: OOM"); }
             memcpy(rc, replacement, rlen + 1);
             free(replacement);
             content = rc;
@@ -804,6 +805,7 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
         if (replacement) {
             size_t rlen = strlen(replacement);
             char  *rc   = arena_alloc(arena, rlen + 1);
+            if (!rc) { free(replacement); return err_result(arena, "edit_file: OOM"); }
             memcpy(rc, replacement, rlen + 1);
             free(replacement);
             out_buf = rc;

@@ -437,6 +437,63 @@ TEST(test_frame_end_no_op_without_begin) {
 }
 
 /* =========================================================================
+ * Go / Rust syntax highlighting
+ * ====================================================================== */
+
+TEST(test_fence_go_keywords) {
+    char out[1024];
+    render_str("```go\nfunc main() {}\n```\n", out, sizeof(out), -1);
+    ASSERT_TRUE(strstr(out, "func") != NULL);
+    ASSERT_TRUE(strstr(out, "main") != NULL);
+    /* ANSI colour must be emitted for keywords */
+    ASSERT_TRUE(strstr(out, "\033[") != NULL);
+}
+
+TEST(test_fence_go_comment) {
+    char out[1024];
+    render_str("```golang\n// a comment\nvar x int\n```\n", out, sizeof(out), -1);
+    ASSERT_TRUE(strstr(out, "var") != NULL);
+    ASSERT_TRUE(strstr(out, "comment") != NULL);
+    ASSERT_TRUE(strstr(out, "\033[") != NULL);
+}
+
+TEST(test_fence_rust_keywords) {
+    char out[1024];
+    render_str("```rust\nfn main() { let x = 1; }\n```\n", out, sizeof(out), -1);
+    ASSERT_TRUE(strstr(out, "fn") != NULL);
+    ASSERT_TRUE(strstr(out, "let") != NULL);
+    ASSERT_TRUE(strstr(out, "\033[") != NULL);
+}
+
+TEST(test_fence_rust_alias) {
+    char out[1024];
+    render_str("```rs\npub fn foo() -> bool { true }\n```\n", out, sizeof(out), -1);
+    ASSERT_TRUE(strstr(out, "pub") != NULL);
+    ASSERT_TRUE(strstr(out, "fn") != NULL);
+    ASSERT_TRUE(strstr(out, "true") != NULL);
+}
+
+/* =========================================================================
+ * Fence header (emit_fence_header via renderer_token)
+ * ====================================================================== */
+
+TEST(test_fence_header_contains_lang) {
+    char out[2048];
+    /* Width 20, lang "go" (2 chars) → 17 dashes + " go" */
+    render_str("```go\nfunc f(){}\n```\n", out, sizeof(out), 20);
+    ASSERT_TRUE(strstr(out, "go") != NULL);
+    /* Box-drawing char U+2500 (─) = bytes \xe2\x94\x80 must appear */
+    ASSERT_TRUE(strstr(out, "\xe2\x94\x80") != NULL);
+}
+
+TEST(test_fence_header_no_lang_no_rule) {
+    /* Unlabelled fence — emit_fence_header returns early; no ─ chars. */
+    char out[2048];
+    render_str("```\nsome code\n```\n", out, sizeof(out), 40);
+    ASSERT_TRUE(strstr(out, "\xe2\x94\x80") == NULL);
+}
+
+/* =========================================================================
  * main
  * ====================================================================== */
 
@@ -471,6 +528,12 @@ int main(void)
     RUN_TEST(test_frame_batches_output);
     RUN_TEST(test_frame_output_identical);
     RUN_TEST(test_frame_end_no_op_without_begin);
+    RUN_TEST(test_fence_go_keywords);
+    RUN_TEST(test_fence_go_comment);
+    RUN_TEST(test_fence_rust_keywords);
+    RUN_TEST(test_fence_rust_alias);
+    RUN_TEST(test_fence_header_contains_lang);
+    RUN_TEST(test_fence_header_no_lang_no_rule);
     PRINT_SUMMARY();
     return g_failures > 0 ? 1 : 0;
 }

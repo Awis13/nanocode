@@ -1058,6 +1058,12 @@ int main(int argc, char **argv)
         rearm_anim_timer(g_loop, 0);
     }
 
+    /* Create renderer for the interactive session.
+     * g_renderer is used by the anim timer to reflow on SIGWINCH.
+     * Not created in daemon mode (no interactive TUI). */
+    if (!cli_daemon)
+        g_renderer = renderer_new(STDOUT_FILENO, arena);
+
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
 

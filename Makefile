@@ -67,7 +67,8 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_audit \
              tests/test_pipe \
              tests/test_history \
-             tests/test_benchmark
+             tests/test_benchmark \
+             tests/test_spinner
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -100,6 +101,9 @@ tests/test_grep: tests/test_grep.c src/tools/grep.c \
 
 tests/test_renderer: tests/test_renderer.c src/tui/renderer.c \
                      src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+tests/test_spinner: tests/test_spinner.c src/tui/spinner.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 tests/test_statusbar: tests/test_statusbar.c src/tui/statusbar.c src/tui/pet.c

@@ -23,6 +23,7 @@
  */
 
 #include "client.h"
+#include "net_errors.h"
 #include "retry.h"
 #include "tls_ca.h"
 
@@ -286,7 +287,12 @@ static int timeout_timer_cb(int id, int events, void *ctx)
     Conn *c = ctx;
     (void)id; (void)events;
     c->timeout_timer = -1; /* already fired */
-    fprintf(stderr, "client: connection timed out\n");
+    int tms = c->req.timeout_ms > 0 ? c->req.timeout_ms : DEFAULT_TIMEOUT_MS;
+    fprintf(stderr,
+            "error: connection to '%s' timed out after %d seconds\n"
+            "  Increase timeout_sec in [provider] config, or check "
+            "network connectivity.\n",
+            c->req.host, tms / 1000);
     conn_error(c);
     return 0; /* one-shot: loop removes us */
 }
@@ -553,8 +559,25 @@ static int conn_io(int fd, int events, void *ctx)
             socklen_t elen = sizeof(err);
             if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &err, &elen) < 0
                 || err) {
-                fprintf(stderr, "client: connect failed: %s\n",
-                        err ? strerror(err) : strerror(errno));
+                int e = err ? err : errno;
+                if (e == ECONNREFUSED) {
+                    const char *base_url = getenv("ANTHROPIC_BASE_URL");
+                    if (base_url)
+                        fprintf(stderr,
+                                "error: connection refused by '%s'\n"
+                                "  Check that ANTHROPIC_BASE_URL ('%s') is "
+                                "correct and the service is running.\n",
+                                c->req.host, base_url);
+                    else
+                        fprintf(stderr,
+                                "error: connection refused by '%s'\n"
+                                "  Check that the API endpoint is available.\n",
+                                c->req.host);
+                } else {
+                    fprintf(stderr,
+                            "error: could not connect to '%s': %s\n",
+                            c->req.host, strerror(e));
+                }
                 conn_error(c);
                 return -1;
             }
@@ -659,7 +682,8 @@ static void conn_do_tls_handshake(Conn *c)
 
     if (st & BR_SSL_CLOSED) {
         int err = br_ssl_engine_last_error(eng);
-        fprintf(stderr, "client: TLS handshake failed: error %d\n", err);
+        fprintf(stderr, "error: TLS handshake failed: %s\n",
+                tls_error_str(err));
         conn_error(c);
         return;
     }
@@ -809,7 +833,18 @@ int http_client_request(HttpClient *cl, const HttpRequest *req)
 
     struct addrinfo *res = NULL;
     if (getaddrinfo(req->host, port_str, &hints, &res) != 0 || !res) {
-        fprintf(stderr, "client: getaddrinfo failed for %s\n", req->host);
+        const char *base_url = getenv("ANTHROPIC_BASE_URL");
+        if (base_url)
+            fprintf(stderr,
+                    "error: DNS resolution failed for '%s'\n"
+                    "  Check that ANTHROPIC_BASE_URL ('%s') is correct.\n",
+                    req->host, base_url);
+        else
+            fprintf(stderr,
+                    "error: DNS resolution failed for '%s'\n"
+                    "  Check network connectivity or set ANTHROPIC_BASE_URL "
+                    "to override the API endpoint.\n",
+                    req->host);
         return -1;
     }
 
@@ -827,6 +862,24 @@ int http_client_request(HttpClient *cl, const HttpRequest *req)
     int cr = connect(fd, res->ai_addr, res->ai_addrlen);
     freeaddrinfo(res);
     if (cr < 0 && errno != EINPROGRESS) {
+        if (errno == ECONNREFUSED) {
+            const char *base_url = getenv("ANTHROPIC_BASE_URL");
+            if (base_url)
+                fprintf(stderr,
+                        "error: connection refused by '%s:%s'\n"
+                        "  Check that ANTHROPIC_BASE_URL ('%s') is correct "
+                        "and the service is running.\n",
+                        req->host, port_str, base_url);
+            else
+                fprintf(stderr,
+                        "error: connection refused by '%s:%s'\n"
+                        "  Check that the API endpoint is available.\n",
+                        req->host, port_str);
+        } else {
+            fprintf(stderr,
+                    "error: could not connect to '%s:%s': %s\n",
+                    req->host, port_str, strerror(errno));
+        }
         close(fd);
         return -1;
     }

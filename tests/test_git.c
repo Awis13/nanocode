@@ -334,13 +334,29 @@ TEST(test_diff_stat_null_inputs)
 
 TEST(test_untracked_no_crash)
 {
+    /* Use a clean temp git repo so the result is hermetic and arena-bounded. */
+    char tmpdir[] = "/tmp/test_untracked_XXXXXX";
+    char *dir = mkdtemp(tmpdir);
+    ASSERT_NOT_NULL(dir);
+
+    /* Initialise an empty git repo — zero untracked files guaranteed. */
+    char init_cmd[256];
+    snprintf(init_cmd, sizeof(init_cmd),
+             "git init -q %s 2>/dev/null", dir);
+    system(init_cmd);
+
     Arena *a = arena_new(1 << 16);
     ASSERT_NOT_NULL(a);
 
-    char *ut = git_untracked(a, ".");
+    char *ut = git_untracked(a, dir);
     ASSERT_NOT_NULL(ut);
 
     arena_free(a);
+
+    /* Cleanup temp dir. */
+    char rm_cmd[256];
+    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", dir);
+    system(rm_cmd);
 }
 
 TEST(test_untracked_null_inputs)

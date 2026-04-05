@@ -67,8 +67,11 @@ TEST_BINS := tests/test_arena tests/test_buf tests/test_json tests/test_executor
              tests/test_audit \
              tests/test_pipe \
              tests/test_history \
+             tests/test_network_errors \
              tests/test_benchmark \
-             tests/test_spinner
+             tests/test_spinner \
+             tests/test_profile \
+             tests/test_session_persist
 
 tests/test_arena: tests/test_arena.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
@@ -119,6 +122,10 @@ tests/test_oom: tests/test_oom.c src/util/arena.c
 
 # CMP-144: retry/backoff — requires src/api/retry.c implementation
 tests/test_retry: tests/test_retry.c src/api/retry.c src/api/thinking.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-402: network error message formatting — no BearSSL dependency
+tests/test_network_errors: tests/test_network_errors.c src/api/net_errors.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-118: conversation manager
@@ -241,6 +248,10 @@ tests/test_history: tests/test_history.c src/core/history.c \
 tests/test_pipe: tests/test_pipe.c src/util/buf.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
+# CMP-403: JSONL streaming + arena OOM recovery
+tests/test_session_persist: tests/test_session_persist.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
 # CMP-149: LSP client + shared JSON-RPC layer
 tests/test_lsp: tests/test_lsp.c src/agent/lsp.c src/agent/jsonrpc.c \
                 src/util/arena.c src/util/buf.c
@@ -248,6 +259,10 @@ tests/test_lsp: tests/test_lsp.c src/agent/lsp.c src/agent/jsonrpc.c \
 
 # CMP-126: input system — line editor, history, tab completion
 tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
+# CMP-382: provider profiles — per-model prompt optimization
+tests/test_profile: tests/test_profile.c src/core/profile.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
 # CMP-404: auto-benchmark — scoring, built-in cases, TOML loader

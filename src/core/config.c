@@ -42,6 +42,7 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "provider.port",                 "0"                         },
     { "provider.model",                "claude-opus-4-6"           },
     { "provider.timeout_ms",           "30000"                     },
+    { "provider.timeout_sec",          "0"                         },
     /* [sandbox] */
     { "sandbox.enabled",               "true"                      },
     { "sandbox.profile",               "strict"                    },
@@ -95,6 +96,8 @@ static const struct { const char *key; const char *val; } s_defaults[] = {
     { "performance.idle_timeout_ms",   "5000"                      },
     { "performance.max_output_lines",  "10000"                     },
     { "performance.history_limit_mb",  "10"                        },
+    /* [memory] */
+    { "memory.arena_max_mb",           "256"                       },
     { NULL, NULL }
 };
 
@@ -120,6 +123,7 @@ static const char s_default_toml_a[] =
     "port         = 0                      # Port override (0 = default: 443 for claude, 11434 for openai/ollama)\n"
     "model        = \"claude-opus-4-6\"      # Model ID\n"
     "timeout_ms   = 30000                  # Request timeout in milliseconds\n"
+    "timeout_sec  = 0                      # Request timeout in seconds (overrides timeout_ms; 0 = use timeout_ms)\n"
     "#\n"
     "# -- Gemma 4 via Ollama (128K context window) --\n"
     "# type     = \"ollama\"\n"
@@ -199,6 +203,10 @@ static const char s_default_toml_b[] =
     "[session]\n"
     "max_files_created = 50              # Max new files an agent may create per session\n"
     "timeout           = \"\"             # Session auto-terminate duration: 30m, 1h, 90s, or empty for none\n"
+    "\n"
+    "# ---------------------------------------------------------------------------\n"
+    "[memory]\n"
+    "arena_max_mb = 256                  # Conversation arena hard limit in MB (256 = 256 MB)\n"
     "\n"
     "# ---------------------------------------------------------------------------\n"
     "# pet = \"cat\"                       # Active pet: cat | crab | dog | off\n"
@@ -482,7 +490,7 @@ int config_set(Config *cfg, const char *key, const char *val)
 static const char * const s_sections[] = {
     "provider", "sandbox", "ui", "system_prompt",
     "rendering", "theme", "layout", "behavior", "keys", "performance",
-    "session",
+    "session", "memory",
     NULL
 };
 

@@ -15,6 +15,7 @@
 #include "../include/audit.h"
 #include "../include/benchmark.h"
 #include "../include/config.h"
+#include "../include/profile.h"
 #include "../include/history.h"
 #include "../include/profile.h"
 #include "../include/editor.h"
@@ -28,10 +29,14 @@
 #include "../src/api/provider.h"
 #include "../src/core/loop.h"
 #include "../src/util/arena.h"
+#include "../src/util/buf.h"
 #include "../src/util/duration.h"
 #include "../src/tools/bash.h"
 #include "../src/tools/executor.h"
 #include "../src/tools/fileops.h"
+#include "../src/tools/grep.h"
+#include "../src/tools/memory.h"
+#include "../src/agent/git.h"
 #include "../include/pet.h"
 #include "../src/tui/repl_state.h"
 #include "../src/tui/spinner.h"
@@ -45,6 +50,7 @@
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_winch   = 0;  /* set by SIGWINCH handler */
 static Loop      *g_loop       = NULL;
+static Loop      *g_os_loop    = NULL;  /* set during one-shot; cleared after */
 static StatusBar *g_statusbar  = NULL;
 static Renderer  *g_renderer   = NULL;  /* set when renderer is created */
 static Pet        g_pet;
@@ -93,6 +99,8 @@ static void handle_signal(int sig)
     g_running = 0;
     if (g_loop)
         loop_stop(g_loop);
+    if (g_os_loop)
+        loop_stop(g_os_loop);
 }
 
 static void handle_sigwinch(int sig)
@@ -118,14 +126,226 @@ static const char *daemon_dispatch_stub(const char *prompt, const char *cwd,
 }
 
 /* -------------------------------------------------------------------------
- * One-shot streaming callbacks and execution
+ * REPL coordinator — wires input → provider → renderer
+ *
+ * ReplSession holds all per-session state.  Callbacks are registered with
+ * the provider and input layer; they drive state transitions, token
+ * rendering, tool dispatch, and re-streaming until the model reaches
+ * end_turn.
  * ---------------------------------------------------------------------- */
 
 typedef struct {
-    Loop  *loop;
-    int    done;
-    int    error;
-} OneshotStreamCtx;
+    Loop                 *loop;
+    Provider             *provider;
+    Conversation         *conv;
+    Arena                *arena;        /* session-long arena (not owned) */
+    const ProviderConfig *pcfg;
+    Buf                   resp_buf;     /* accumulates text tokens per turn */
+    ToolCall             *pending;      /* heap-allocated tool-call array */
+    int                   npending;
+    int                   pending_cap;
+    InputCtx             *input_ctx;
+} ReplSession;
+
+static ReplSession g_rs;
+
+/* Forward declarations */
+static void repl_on_done(int error, const char *stop_reason, void *ctx);
+static int  repl_start_stream(ReplSession *rs);
+
+static void repl_free_pending(ReplSession *rs)
+{
+    for (int i = 0; i < rs->npending; i++) {
+        free(rs->pending[i].id);
+        free(rs->pending[i].name);
+        free(rs->pending[i].input);
+    }
+    rs->npending = 0;
+}
+
+static void repl_on_token(const char *tok, size_t len, void *ctx)
+{
+    ReplSession *rs = ctx;
+    repl_transition(&g_repl_ctx, REPL_STREAMING);
+    if (g_renderer)
+        renderer_token(g_renderer, tok, len);
+    buf_append(&rs->resp_buf, tok, len);
+    g_sb_out_tok++;
+}
+
+static void repl_on_tool(const char *id, const char *name,
+                          const char *input, void *ctx)
+{
+    ReplSession *rs = ctx;
+    if (rs->npending >= rs->pending_cap) {
+        int new_cap = rs->pending_cap ? rs->pending_cap * 2 : 4;
+        ToolCall *arr = realloc(rs->pending,
+                                (size_t)new_cap * sizeof(ToolCall));
+        if (!arr)
+            return;
+        rs->pending     = arr;
+        rs->pending_cap = new_cap;
+    }
+    ToolCall *tc = &rs->pending[rs->npending++];
+    tc->id    = strdup(id);
+    tc->name  = strdup(name);
+    tc->input = strdup(input);
+}
+
+static void repl_on_done(int error, const char *stop_reason, void *ctx)
+{
+    (void)stop_reason;
+    ReplSession *rs = ctx;
+
+    /* Flush any partial rendered output. */
+    if (g_renderer)
+        renderer_flush(g_renderer);
+
+    if (error) {
+        fprintf(stderr, "\nnanocode: stream error\n");
+        repl_transition(&g_repl_ctx, REPL_PROMPT);
+        buf_reset(&rs->resp_buf);
+        repl_free_pending(rs);
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        return;
+    }
+
+    /* Record accumulated text as assistant turn. */
+    if (rs->resp_buf.len > 0) {
+        const char *text = buf_str(&rs->resp_buf);
+        conv_add(rs->conv, "assistant", text);
+        buf_reset(&rs->resp_buf);
+    }
+
+    /* Tool calls pending — dispatch synchronously, then re-stream. */
+    if (rs->npending > 0) {
+        repl_transition(&g_repl_ctx, REPL_TOOL_EXEC);
+        /* tool_dispatch_all records tool_use + tool_result turns in conv.
+         * The pending strings are strdup'd; they survive the call and are
+         * freed immediately after. */
+        tool_dispatch_all(rs->pending, rs->npending, rs->conv, rs->arena);
+        repl_free_pending(rs);
+        if (repl_start_stream(rs) != 0) {
+            repl_transition(&g_repl_ctx, REPL_PROMPT);
+            if (rs->input_ctx)
+                input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        }
+        return;
+    }
+
+    /* Turn complete — return to prompt. */
+    repl_transition(&g_repl_ctx, REPL_DONE);
+    repl_transition(&g_repl_ctx, REPL_PROMPT);
+    if (rs->input_ctx)
+        input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+}
+
+static int repl_start_stream(ReplSession *rs)
+{
+    repl_transition(&g_repl_ctx, REPL_THINKING);
+
+    /*
+     * Build the message array from the conversation.  Use an ephemeral
+     * arena so the array doesn't permanently occupy the session arena.
+     * provider_stream() copies everything it needs before returning.
+     */
+    Arena *tmp = arena_new(256 * 1024);
+    if (!tmp)
+        return -1;
+
+    int      nmsg = 0;
+    Message *msgs = conv_to_messages(rs->conv, &nmsg, tmp);
+    if (!msgs || nmsg == 0) {
+        arena_free(tmp);
+        return -1;
+    }
+
+    int rc = provider_stream(rs->provider, msgs, nmsg,
+                             repl_on_token, repl_on_tool, repl_on_done, rs);
+    arena_free(tmp);
+    return rc;
+}
+
+static void repl_line_cb(InputLine line, void *userdata)
+{
+    ReplSession *rs = userdata;
+
+    /* EOF (Ctrl+D) — stop the loop. */
+    if (line.is_eof) {
+        loop_stop(rs->loop);
+        return;
+    }
+
+    /* Empty line — re-show prompt. */
+    if (line.len == 0) {
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        return;
+    }
+
+    input_history_add(line.text);
+
+    /* Slash commands. */
+    if (cmd_is_command(line.text)) {
+        char *model_ptr = (char *)(uintptr_t)rs->pcfg->model;
+        CmdContext cctx = {
+            .conv    = rs->conv,
+            .model   = &model_ptr,
+            .in_tok  = g_sb_in_tok,
+            .out_tok = g_sb_out_tok,
+            .fd_out  = STDOUT_FILENO,
+            .fd_in   = STDIN_FILENO,
+        };
+        cmd_dispatch(line.text, &cctx);
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+        return;
+    }
+
+    /* Normal user message — add to conversation and stream. */
+    conv_add(rs->conv, "user", line.text);
+    g_sb_in_tok++;
+
+    if (repl_start_stream(rs) != 0) {
+        fprintf(stderr, "nanocode: failed to start stream\n");
+        if (rs->input_ctx)
+            input_ctx_reset(rs->input_ctx, rs->arena, "You: ");
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * One-shot streaming callbacks and execution
+ *
+ * Implements a full agentic loop: stream → tool dispatch → stream → ...
+ * until the model reaches end_turn or ONESHOT_MAX_TURNS is exhausted.
+ * ---------------------------------------------------------------------- */
+
+#define ONESHOT_MAX_TOOLS  32
+#define ONESHOT_MAX_TURNS  20
+
+typedef struct {
+    Loop      *loop;
+    int        done;
+    int        error;
+    int        needs_tools;   /* stop_reason was "tool_use" */
+
+    /* Tool calls accumulated during this stream turn. */
+    ToolCall   tool_calls[ONESHOT_MAX_TOOLS];
+    int        ntool_calls;
+
+    Arena     *arena;
+} OneshotCtx;
+
+/* Arena string copy — avoids heap allocation for per-turn tool args. */
+static char *oneshot_arena_dup(Arena *a, const char *s)
+{
+    if (!s || !a) return NULL;
+    size_t n = strlen(s) + 1;
+    char  *d = arena_alloc(a, n);
+    if (d) memcpy(d, s, n);
+    return d;
+}
 
 static void oneshot_on_token(const char *token, size_t len, void *ctx)
 {
@@ -134,22 +354,92 @@ static void oneshot_on_token(const char *token, size_t len, void *ctx)
     fflush(stdout);
 }
 
+static void oneshot_on_tool(const char *id, const char *name,
+                             const char *input, void *ctx)
+{
+    OneshotCtx *oc = ctx;
+    if (oc->ntool_calls >= ONESHOT_MAX_TOOLS) return;
+    int i = oc->ntool_calls++;
+    oc->tool_calls[i].id    = oneshot_arena_dup(oc->arena, id    ? id    : "");
+    oc->tool_calls[i].name  = oneshot_arena_dup(oc->arena, name  ? name  : "");
+    oc->tool_calls[i].input = oneshot_arena_dup(oc->arena, input ? input : "{}");
+}
+
 static void oneshot_on_done(int error, const char *stop_reason, void *ctx)
 {
-    (void)stop_reason;
-    OneshotStreamCtx *oc = ctx;
-    oc->error = error;
-    oc->done  = 1;
+    OneshotCtx *oc = ctx;
+    oc->error       = error;
+    oc->needs_tools = (!error && stop_reason &&
+                       strcmp(stop_reason, "tool_use") == 0);
+    oc->done        = 1;
     loop_stop(oc->loop);
 }
 
 /*
- * run_oneshot — execute the -c instruction via the streaming API,
- * write plain-text output to stdout, and return 0 on success or 1 on error.
+ * Fileops confirm callback for oneshot mode.
+ * Logs each file change to stdout and auto-applies (returns 1 = apply,
+ * keep callback active for subsequent writes).
+ */
+static int oneshot_fileops_cb(const char *path,
+                               const char *old_content,
+                               const char *new_content,
+                               void *ctx)
+{
+    (void)ctx; (void)new_content;
+    const char *action = old_content ? "modified" : "created";
+    printf("[%s] %s\n", action, path);
+    fflush(stdout);
+    return 1;
+}
+
+/*
+ * run_oneshot — run a single instruction through the full agentic loop:
+ *   1. Read instruction (or read from stdin when command == "-").
+ *   2. Register tools and wire fileops auto-apply callback.
+ *   3. Stream provider response.
+ *   4. If stop_reason == "tool_use": dispatch tools, add results to conv, repeat.
+ *   5. On end_turn: exit 0.  On error: exit 1.  On bad args: exit 2.
+ *
+ * g_os_loop is set before loop_run() so SIGINT/SIGTERM can stop the loop.
  */
 static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
                        const SandboxConfig *sc, Arena *arena, int no_git)
 {
+    /* Resolve instruction: "-" means read from stdin. */
+    const char *instruction = flags->command;
+    char *stdin_buf = NULL;
+    if (instruction && strcmp(instruction, "-") == 0) {
+        size_t cap = 4096, used = 0;
+        stdin_buf = malloc(cap);
+        if (!stdin_buf) {
+            fprintf(stderr, "nanocode: out of memory reading stdin\n");
+            return 1;
+        }
+        int c;
+        while ((c = fgetc(stdin)) != EOF) {
+            if (used + 1 >= cap) {
+                cap *= 2;
+                char *nb = realloc(stdin_buf, cap);
+                if (!nb) { free(stdin_buf); return 1; }
+                stdin_buf = nb;
+            }
+            stdin_buf[used++] = (char)c;
+        }
+        stdin_buf[used] = '\0';
+        if (used == 0) {
+            fprintf(stderr, "nanocode: empty instruction from stdin\n");
+            free(stdin_buf);
+            return 2;
+        }
+        instruction = stdin_buf;
+    }
+
+    if (!instruction || !instruction[0]) {
+        fprintf(stderr, "nanocode: empty instruction\n");
+        free(stdin_buf);
+        return 2;
+    }
+
     char cwd[1024];
     if (getcwd(cwd, sizeof(cwd)) == NULL)
         cwd[0] = '\0';
@@ -157,23 +447,24 @@ static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
     const char *system_prompt = prompt_build(arena, cwd[0] ? cwd : ".", NULL, sc, no_git);
     if (!system_prompt) {
         fprintf(stderr, "nanocode: failed to build system prompt\n");
+        free(stdin_buf);
         return 1;
     }
 
     Conversation *conv = conv_new(arena);
     if (!conv) {
         fprintf(stderr, "nanocode: failed to create conversation\n");
+        free(stdin_buf);
         return 1;
     }
     conv_add(conv, "system", system_prompt);
-    conv_add(conv, "user",   flags->command);
+    conv_add(conv, "user",   instruction);
+    free(stdin_buf);
+    stdin_buf = NULL;
 
-    int nmsg = 0;
-    Message *msgs = conv_to_messages(conv, &nmsg, arena);
-    if (!msgs || nmsg == 0) {
-        fprintf(stderr, "nanocode: failed to build message array\n");
-        return 1;
-    }
+    /* Wire file-change tracking callback (auto-applies and logs to stdout).
+     * In dry-run mode the executor won't write but the cb is harmless. */
+    fileops_set_confirm_cb(oneshot_fileops_cb, NULL);
 
     Loop *os_loop = loop_new();
     if (!os_loop) {
@@ -188,28 +479,58 @@ static int run_oneshot(const OneShotFlags *flags, const ProviderConfig *pcfg,
         return 1;
     }
 
-    OneshotStreamCtx oc = {os_loop, 0, 0};
+    /* Expose loop to signal handler so SIGINT/SIGTERM cleanly stop the run. */
+    g_os_loop = os_loop;
 
-    if (provider_stream(prov, msgs, nmsg,
-                        oneshot_on_token,
-                        NULL,
-                        oneshot_on_done,
-                        &oc) != 0) {
-        fprintf(stderr, "nanocode: failed to start stream\n");
-        provider_free(prov);
-        loop_free(os_loop);
-        return 1;
+    int exit_rc = 1;
+
+    /* Agentic loop: stream → tool dispatch → stream → ... */
+    for (int turn = 0; turn < ONESHOT_MAX_TURNS; turn++) {
+        int nmsg = 0;
+        Message *msgs = conv_to_messages(conv, &nmsg, arena);
+        if (!msgs || nmsg == 0) {
+            fprintf(stderr, "nanocode: failed to build message array\n");
+            break;
+        }
+
+        OneshotCtx oc;
+        memset(&oc, 0, sizeof(oc));
+        oc.loop  = os_loop;
+        oc.arena = arena;
+
+        if (provider_stream(prov, msgs, nmsg,
+                            oneshot_on_token,
+                            oneshot_on_tool,
+                            oneshot_on_done,
+                            &oc) != 0) {
+            fprintf(stderr, "nanocode: failed to start stream\n");
+            break;
+        }
+
+        loop_run(os_loop);
+
+        if (oc.error) {
+            exit_rc = 1;
+            break;
+        }
+
+        if (!oc.needs_tools) {
+            /* Natural end_turn — success. */
+            fputc('\n', stdout);
+            exit_rc = 0;
+            break;
+        }
+
+        /* Dispatch tool calls and append results to conversation. */
+        if (oc.ntool_calls > 0)
+            tool_dispatch_all(oc.tool_calls, oc.ntool_calls, conv, arena);
     }
 
-    loop_run(os_loop);
-
-    if (!oc.error)
-        fputc('\n', stdout);
-
+    g_os_loop = NULL;
     provider_free(prov);
     loop_free(os_loop);
 
-    return oneshot_exit_code(oc.error, 0);
+    return oneshot_exit_code(exit_rc, 0);
 }
 
 int main(int argc, char **argv)
@@ -354,7 +675,7 @@ int main(int argc, char **argv)
                                        err, sizeof(err));
             if (rc == -1) {
                 fprintf(stderr, "%s\n", err);
-                return 1;
+                return 2;  /* exit 2 = invalid args */
             }
             /* Capture first positional arg as instruction (for pipe mode). */
             if (rc == 0 && argv[i][0] != '-' && !cli_instruction)
@@ -362,9 +683,15 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Auto-detect pipe mode when stdin is not a TTY. */
-    if (!cli_pipe && !isatty(STDIN_FILENO))
-        cli_pipe = 1;
+    /* Auto-detect pipe mode when stdin is not a TTY.
+     * Exception: -c - explicitly requests stdin for the instruction; in that
+     * case we must NOT activate pipe mode so the full config path is taken. */
+    if (!cli_pipe && !isatty(STDIN_FILENO)) {
+        int stdin_oneshot = (oneshot.enabled &&
+                             oneshot.command && strcmp(oneshot.command, "-") == 0);
+        if (!stdin_oneshot)
+            cli_pipe = 1;
+    }
 
     /* -----------------------------------------------------------------------
      * Phase 1.5: Pipe mode — early dispatch before full config load.
@@ -501,6 +828,7 @@ int main(int argc, char **argv)
             prof = profile_for_model(arena, provider_cfg.model);
 
         if (prof) {
+            /* Apply profile values that have not been overridden via CLI */
             if (prof->thinking_budget > 0 && provider_cfg.thinking_budget == 0)
                 provider_cfg.thinking_budget = prof->thinking_budget;
             if (prof->temperature_x1000 >= 0 && provider_cfg.temperature_x1000 < 0)
@@ -566,6 +894,19 @@ int main(int argc, char **argv)
             fileops_set_audit(g_audit, NULL, profile);
         }
     }
+
+    /* -----------------------------------------------------------------------
+     * Phase 3.55: Register tools with the executor.
+     *
+     * Must happen before any provider stream (oneshot or REPL) so that
+     * tool_dispatch_all() can resolve tool names to handlers.
+     * -------------------------------------------------------------------- */
+    fileops_register_all();
+    bash_tool_register();
+    grep_register();
+    memory_tool_register();
+    git_tools_register();
+    tool_search_register();
 
     /* -----------------------------------------------------------------------
      * Phase 3.7: One-shot dispatch — skip TUI and run a single instruction.
@@ -694,8 +1035,6 @@ int main(int argc, char **argv)
                 printf("Loaded %d turns from history.\n", resume_conv->nturn);
         }
     }
-    (void)resume_conv; /* wired into session coordinator once TUI is complete */
-
     /* -----------------------------------------------------------------------
      * Phase 5: TUI status bar + pet animation (interactive sessions only).
      * ---------------------------------------------------------------------- */

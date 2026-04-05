@@ -44,6 +44,10 @@ static AuditLog   *s_fo_audit_log       = NULL;
 static const char *s_fo_audit_session   = NULL;
 static const char *s_fo_audit_sandbox   = NULL;
 
+/* Confirmation callback — NULL means silent auto-apply (default). */
+static fileops_confirm_cb s_confirm_cb  = NULL;
+static void              *s_confirm_ctx = NULL;
+
 void fileops_set_limits(long max_file_size_bytes, int max_files_created)
 {
     s_max_file_size     = max_file_size_bytes;
@@ -62,6 +66,12 @@ void fileops_set_audit(AuditLog *log, const char *session_id,
 int fileops_get_files_created(void)
 {
     return s_files_created;
+}
+
+void fileops_set_confirm_cb(fileops_confirm_cb cb, void *ctx)
+{
+    s_confirm_cb  = cb;
+    s_confirm_ctx = ctx;
 }
 
 /* -------------------------------------------------------------------------
@@ -582,6 +592,31 @@ ToolResult fileops_write(Arena *arena, const char *args_json)
         return err_result(arena, msg);
     }
 
+    /* Invoke confirmation callback if registered. */
+    if (s_confirm_cb) {
+        /* Read current content for the diff. */
+        char *old_content = NULL;
+        struct stat st_cb;
+        if (stat(path, &st_cb) == 0 && S_ISREG(st_cb.st_mode)) {
+            FILE *cf = fopen(path, "rb");
+            if (cf) {
+                char *cbuf = arena_alloc(arena, (size_t)st_cb.st_size + 1);
+                size_t rlen = 0;
+                if (cbuf) {
+                    rlen = fread(cbuf, 1, (size_t)st_cb.st_size, cf);
+                    cbuf[rlen] = '\0';
+                    old_content = cbuf;
+                }
+                fclose(cf);
+            }
+        }
+        int decision = s_confirm_cb(path, old_content, content, s_confirm_ctx);
+        if (decision < 0)
+            s_confirm_cb = NULL;  /* apply-all: disable for future writes */
+        if (decision == 0)
+            return err_result(arena, "write_file: change rejected by user");
+    }
+
     if (ensure_parent_dirs(path) < 0) {
         char msg[4096];
         snprintf(msg, sizeof(msg),
@@ -736,6 +771,15 @@ ToolResult fileops_edit(Arena *arena, const char *args_json)
     memcpy(dst, src, tail);
     dst   += tail;
     *dst   = '\0';
+
+    /* Invoke confirmation callback if registered. */
+    if (s_confirm_cb) {
+        int decision = s_confirm_cb(path, file_buf, out_buf, s_confirm_ctx);
+        if (decision < 0)
+            s_confirm_cb = NULL;  /* apply-all: disable for future writes */
+        if (decision == 0)
+            return err_result(arena, "edit_file: change rejected by user");
+    }
 
     /* Write back. */
     f = fopen(path, "wb");

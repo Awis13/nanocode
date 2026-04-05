@@ -261,6 +261,10 @@ tests/test_lsp: tests/test_lsp.c src/agent/lsp.c src/agent/jsonrpc.c \
 tests/test_input: tests/test_input.c src/tui/input.c src/util/arena.c
 	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
 
+# CMP-382: provider profiles — per-model prompt optimization
+tests/test_profile: tests/test_profile.c src/core/profile.c src/util/arena.c
+	$(CC) $(TEST_CFLAGS) $(INCLUDES) -o $@ $^
+
 # CMP-404: auto-benchmark — scoring, built-in cases, TOML loader
 tests/test_benchmark: tests/test_benchmark.c src/benchmark/benchmark.c \
                       src/util/buf.c

@@ -288,6 +288,24 @@ TEST(test_sbpl_small_buffer_truncated)
     ASSERT_EQ(buf[sizeof(buf) - 1], '\0');
 }
 
+TEST(test_sbpl_path_with_double_quote)
+{
+    /* A '"' in a path must be escaped to '\"' so the SBPL string is valid. */
+    SandboxConfig sc = make_sc(1, "strict", "/tmp/foo\"bar", NULL, 0, 0);
+    char buf[4096];
+    sandbox_sbpl_build(&sc, buf, sizeof(buf));
+    ASSERT_TRUE(strstr(buf, "(subpath \"/tmp/foo\\\"bar\")") != NULL);
+}
+
+TEST(test_sbpl_path_with_backslash)
+{
+    /* A '\' in a path must be escaped to '\\' so the SBPL string is valid. */
+    SandboxConfig sc = make_sc(1, "strict", "/tmp/foo\\bar", NULL, 0, 0);
+    char buf[4096];
+    sandbox_sbpl_build(&sc, buf, sizeof(buf));
+    ASSERT_TRUE(strstr(buf, "(subpath \"/tmp/foo\\\\bar\")") != NULL);
+}
+
 /* =========================================================================
  * sandbox_build_prompt_block
  * ====================================================================== */
@@ -308,9 +326,10 @@ TEST(test_prompt_block_enabled_contains_profile)
     sandbox_build_prompt_block(&sc, buf, sizeof(buf));
     ASSERT_TRUE(strstr(buf, "permissive")      != NULL);
     ASSERT_TRUE(strstr(buf, "/tmp")            != NULL);
-    ASSERT_TRUE(strstr(buf, "ls")              != NULL);
-    ASSERT_TRUE(strstr(buf, "denied")          != NULL);  /* network */
-    ASSERT_TRUE(strstr(buf, "<sandbox_policy>") != NULL);
+    ASSERT_TRUE(strstr(buf, "ls")                           != NULL);
+    ASSERT_TRUE(strstr(buf, "denied")                       != NULL);  /* network */
+    ASSERT_TRUE(strstr(buf, "<sandbox_policy>")             != NULL);
+    ASSERT_TRUE(strstr(buf, "allowed_commands (app-layer)") != NULL);
 }
 
 TEST(test_prompt_block_network_allowed_label)
@@ -363,6 +382,8 @@ int main(void)
     RUN_TEST(test_sbpl_network_denied);
     RUN_TEST(test_sbpl_no_paths);
     RUN_TEST(test_sbpl_small_buffer_truncated);
+    RUN_TEST(test_sbpl_path_with_double_quote);
+    RUN_TEST(test_sbpl_path_with_backslash);
 
     RUN_TEST(test_prompt_block_disabled_empty);
     RUN_TEST(test_prompt_block_enabled_contains_profile);

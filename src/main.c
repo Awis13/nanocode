@@ -386,9 +386,10 @@ static void oneshot_on_done(int error, const char *stop_reason, void *ctx)
 static int oneshot_fileops_cb(const char *path,
                                const char *old_content,
                                const char *new_content,
+                               char **out_replacement,
                                void *ctx)
 {
-    (void)ctx; (void)new_content;
+    (void)ctx; (void)new_content; (void)out_replacement;
     const char *action = old_content ? "modified" : "created";
     printf("[%s] %s\n", action, path);
     fflush(stdout);

@@ -21,7 +21,6 @@
 #include "../include/audit.h"
 #include "../include/benchmark.h"
 #include "../include/config.h"
-#include "../include/profile.h"
 #include "../include/history.h"
 #include "../include/profile.h"
 #include "../include/editor.h"
@@ -51,8 +50,7 @@
 #include "../src/agent/tool_protocol.h"
 #include "../src/tui/commands.h"
 #include "../src/tui/input.h"
-#include "../src/tui/renderer.h"
-#include "repl_coordinator.h"
+#include "../src/core/repl_coordinator.h"
 #include "pipe.h"
 
 static volatile sig_atomic_t g_running = 1;
@@ -1084,6 +1082,7 @@ int main(int argc, char **argv)
     /* -----------------------------------------------------------------------
      * Phase 6: Wire interactive REPL (non-daemon, TTY sessions only).
      * ---------------------------------------------------------------------- */
+    int repl_started = 0;
     if (!cli_daemon && isatty(STDIN_FILENO)) {
         ReplGlobals rg;
         rg.renderer   = &g_renderer;
@@ -1092,12 +1091,14 @@ int main(int argc, char **argv)
         rg.sb_out_tok = &g_sb_out_tok;
         rg.sb_turn    = &g_sb_turn;
         repl_coordinator_setup(g_loop, &provider_cfg, &sc, arena, &rg);
+        repl_started = 1;
     }
 
     printf("nanocode v0.1-dev\n");
     loop_run(g_loop);
 
-    repl_coordinator_teardown();
+    if (repl_started)
+        repl_coordinator_teardown();
 
     if (g_statusbar) {
         statusbar_clear(g_statusbar);
